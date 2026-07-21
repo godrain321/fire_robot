@@ -1,0 +1,86 @@
+# =========================
+# Python cache
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# =========================
+# Python virtual environments
+# =========================
+venv/
+.venv/
+env/
+
+# =========================
+# FDS generated output files
+# 직접 작성한 *.fds 파일은 제외하지 않음
+# =========================
+*.out
+*.smv
+*.sf
+*.s3d
+*.bf
+*.prt5
+*.restart
+
+*_hrr.csv
+*_devc.csv
+*_ctrl.csv
+*_cpu.csv
+*_mass.csv
+*_steps.csv
+
+# =========================
+# Large generated simulation data
+# factory_v1, factory_v2 등의 processed 폴더
+# =========================
+simulator/*/processed/*.npz
+simulator/*/processed/*.npy
+
+# =========================
+# ROS 2 generated folders
+# =========================
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
+# 혹시 workspace 위치가 달라질 경우
+build/
+install/
+log/
+
+# =========================
+# ESP32 / PlatformIO
+# =========================
+.pio/
+
+# =========================
+# Editor settings
+# =========================
+.vscode/
+.idea/
+
+# =========================
+# Temporary files
+# =========================
+*.log
+*.tmp
+*~
+.DS_Store
+Thumbs.db
+
+# =========================
+# FDS / Smokeview generated metadata
+# =========================
+*.bnd
+*.gbnd
+*.sz
+*.pickle
+
+# =========================
+# Generated simulation CSV data
+# =========================
+simulator/*/factory*_temp_*.csv
+simulator/*/thermal_mlx90640_from_fds*.csv
+simulator/*/mq135_path_log.csv

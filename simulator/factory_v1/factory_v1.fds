@@ -1,0 +1,131 @@
+&HEAD CHID='factory_v1', TITLE='Empty factory 20m x 30m' /
+
+&MESH IJK=40,60,20, XB=0.0,20.0,0.0,30.0,0.0,5.0 /
+
+&TIME T_END=240 /
+
+&REAC FUEL='PROPANE',
+      SOOT_YIELD=0.01,
+      CO_YIELD=0.02,
+      HEAT_OF_COMBUSTION=46460. /  !소재의 예시값. 소재에 따라 값이 바뀜
+
+&SURF ID='WALL', COLOR='GRAY 80', DEFAULT=.TRUE. /
+
+&SURF ID='BURNER', HRRPUA=1000., RAMP_Q='FIRE_GROWTH', COLOR='RED' /
+
+&RAMP ID='FIRE_GROWTH', T=0.0,  F=0.0 /
+&RAMP ID='FIRE_GROWTH', T=30.0, F=0.3 /
+&RAMP ID='FIRE_GROWTH', T=60.0, F=0.7 /
+&RAMP ID='FIRE_GROWTH', T=90.0, F=1.0 /
+
+!불번짐 추가
+&SURF ID='SPREADING_FIRE',
+      HRRPUA=500.,
+      RAMP_Q='LOCAL_BURN',
+      COLOR='ORANGE' /
+
+&RAMP ID='LOCAL_BURN', T=0.0,  F=0.0 /
+&RAMP ID='LOCAL_BURN', T=5.0,  F=1.0 /
+&RAMP ID='LOCAL_BURN', T=60.0, F=1.0 /
+&RAMP ID='LOCAL_BURN', T=70.0, F=0.0 /
+
+&VENT ID='SPREAD_FIRE_AREA',
+      XB=13.5,19.0,22.5,28.0,0.0,0.0,
+      SURF_ID='SPREADING_FIRE',
+      XYZ=16.5,25.5,0.0,
+      SPREAD_RATE=0.03 /
+! ============================================================
+! FIRE SOURCE
+! ============================================================
+
+! 사무실 내부 바닥 위 작은 화재원
+&OBST ID='OFFICE_FIRE_BASE', XB=16.0,17.0,25.0,26.0,0.0,0.2, SURF_ID='WALL' /
+
+! 화재면: OBST 윗면에 부착
+&VENT ID='OFFICE_FIRE', XB=16.0,17.0,25.0,26.0,0.2,0.2, SURF_ID='BURNER' /
+
+! ============================================================
+! OUTER WALLS
+! ============================================================
+
+! 외벽: 두께 0.2 m, 높이 5 m
+&OBST XB=0.0,20.0,0.0,0.2,0.0,5.0, SURF_ID='WALL' /
+&OBST XB=0.0,20.0,29.8,30.0,0.0,5.0, SURF_ID='WALL' /
+&OBST XB=0.0,0.2,0.0,30.0,0.0,5.0, SURF_ID='WALL' /
+&OBST XB=19.8,20.0,0.0,30.0,0.0,5.0, SURF_ID='WALL' /
+
+! ============================================================
+! RACK SURFACE
+! ============================================================
+
+&SURF ID='RACK', COLOR='GRAY 50' /
+
+! ============================================================
+! STORAGE RACKS
+! 긴 선반 8줄, 각 선반은 길이 18 m, 폭 0.4 m, 높이 2.0 m
+! 공장 내부 중앙 영역에 배치
+! ============================================================
+
+&OBST ID='RACK_01', XB=2.0,18.0, 4.0,4.4, 0.0,2.0, SURF_ID='RACK' /
+&OBST ID='RACK_02', XB=2.0,18.0, 6.5,6.9, 0.0,2.0, SURF_ID='RACK' /
+&OBST ID='RACK_03', XB=2.0,18.0, 9.0,9.4, 0.0,2.0, SURF_ID='RACK' /
+&OBST ID='RACK_04', XB=2.0,18.0,11.5,11.9,0.0,2.0, SURF_ID='RACK' /
+&OBST ID='RACK_05', XB=2.0,18.0,14.0,14.4,0.0,2.0, SURF_ID='RACK' /
+&OBST ID='RACK_06', XB=2.0,18.0,16.5,16.9,0.0,2.0, SURF_ID='RACK' /
+&OBST ID='RACK_07', XB=2.0,18.0,19.0,19.4,0.0,2.0, SURF_ID='RACK' /
+
+! ============================================================
+! OFFICE AREA
+! 위치: 공장 왼쪽 위 구역
+! 크기: X=0.2~6.0 m, Y=22.0~29.8 m, 높이 3.0 m
+! 벽 두께: 0.2 m
+! ============================================================
+
+&SURF ID='OFFICE_WALL', COLOR='GRAY 70' /
+
+! 사무실 외곽 벽
+&OBST ID='OFFICE_WALL_LEFT',   XB=0.2,0.4,22.0,29.8,0.0,3.0, SURF_ID='OFFICE_WALL' /
+&OBST ID='OFFICE_WALL_RIGHT',  XB=5.8,6.0,22.0,29.8,0.0,3.0, SURF_ID='OFFICE_WALL' /
+&OBST ID='OFFICE_WALL_TOP',    XB=0.2,6.0,29.6,29.8,0.0,3.0, SURF_ID='OFFICE_WALL' /
+
+! 아래쪽 벽은 출입구 때문에 두 조각으로 나눔
+&OBST ID='OFFICE_WALL_BOTTOM_1', XB=0.2,2.4,22.0,22.2,0.0,3.0, SURF_ID='OFFICE_WALL' /
+&OBST ID='OFFICE_WALL_BOTTOM_2', XB=3.6,6.0,22.0,22.2,0.0,3.0, SURF_ID='OFFICE_WALL' /
+
+! 사무실 입구: 아래쪽 벽 중앙 문
+! 이미 아래쪽 벽을 두 조각으로 나눴기 때문에 X=2.4~3.6, Y=22.0~22.2가 문 역할
+
+! ============================================================
+! EXIT / OPEN BOUNDARY
+! ============================================================
+
+! 출입구/개방면: 오른쪽 벽 중앙 일부를 열어 둠
+&HOLE XB=19.7,20.1,13.0,17.0,0.0,2.5 /
+
+! 외부로 통하는 개방 경계
+&VENT XB=20.0,20.0,13.0,17.0,0.0,2.5, SURF_ID='OPEN' /
+
+! ============================================================
+! OUTPUT SETTINGS
+! ============================================================
+
+! 기존 X-Z 단면 출력은 3D 테스트에서 헷갈리므로 주석 처리
+! &SLCF PBY=15.0, QUANTITY='TEMPERATURE', VECTOR=.TRUE. /
+
+! 기존 z=0.30m 2D 수평 slice도 3D 테스트에서는 주석 처리
+! &SLCF ID='TEMP_Z030', PBZ=0.30, QUANTITY='TEMPERATURE', CELL_CENTERED=T /
+
+! 벽/물체 표면 열유속
+&BNDF QUANTITY='GAUGE HEAT FLUX' /
+
+! 3D slice 출력 간격 설정
+&DUMP DT_SLCF=1.0, DT_SL3D=1.0 /
+
+! 전체 공간 3D 온도장 출력
+&SLCF ID='TEMP_3D', XB=0.0,20.0,0.0,30.0,0.0,5.0, QUANTITY='TEMPERATURE', CELL_CENTERED=T /
+
+!CO 1.3m 부분 추출
+&SLCF ID='CO_Z130', PBZ=1.3, QUANTITY='VOLUME FRACTION', SPEC_ID='CARBON MONOXIDE', CELL_CENTERED=.TRUE. /
+
+
+&TAIL
