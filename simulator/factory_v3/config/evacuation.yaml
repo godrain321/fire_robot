@@ -1,0 +1,36 @@
+fds_file: factory_v3.fds
+fds_result_chid: factory_v3_cat
+temperature_npz: processed/fds_temperature_3d_timeseries.npz
+
+planner:
+  grid_resolution_m: 0.20
+  inflation_radius_m: 0.45
+
+# TODO temporary: semantic INIT lies in the current inflated machinery mask.
+# This explicit nearby measured-free point is used instead; it is never moved
+# silently by the program.
+robot_start:
+  x: 13.0
+  y: 16.0
+  yaw_deg: -85.70
+
+# TODO temporary until a scenario-specific victim pose is supplied.
+humans:
+  - {id: victim_1, x: 16.0, y: 15.0}
+human_detection_range_m: 10.0
+victim_approach_distance_m: 1.0
+search_waypoint: {x: 16.0, y: 15.0}
+
+# Marker coordinates come from semantic_points.yaml. Approach points are
+# explicit free cells on the building-interior side of each solid marker.
+exits:
+  - id: EXIT1
+    marker: {x: 9.3476007524, y: 18.2045725287}
+    approach: {x: 9.4, y: 17.4}
+  - id: EXIT2
+    marker: {x: 21.0918754002, y: 9.4615073998}
+    approach: {x: 21.0, y: 9.8}
+  - id: EXIT3
+    marker: {x: 19.0071266790, y: 26.1492717487}
+    approach: {x: 19.0, y: 25.4}
+

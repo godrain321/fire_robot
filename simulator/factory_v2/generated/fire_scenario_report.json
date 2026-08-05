@@ -1,0 +1,64 @@
+{
+  "status": "PASS",
+  "protected_geometry_unchanged": true,
+  "protected_hashes": {
+    "obstacles": "7fe0d6f96320efb7c6af7452389139dd221436bb7f5126427fa52d62126caab6",
+    "exits": "6c1df3d09e30d71f974fd2b2b69dd240f3c2dcb32df16ad75a993c7fb7a679c5"
+  },
+  "wall_obstacle_ids": [
+    "NO_GO_ZONE_0050",
+    "NO_GO_ZONE_0051",
+    "NO_GO_ZONE_0052",
+    "NO_GO_ZONE_0053",
+    "NO_GO_ZONE_0054",
+    "NO_GO_ZONE_0055",
+    "NO_GO_ZONE_0056",
+    "NO_GO_ZONE_0057",
+    "NO_GO_ZONE_0058",
+    "SLAM_OCCUPIED_0211",
+    "SLAM_OCCUPIED_0214",
+    "SLAM_OCCUPIED_0217",
+    "SLAM_OCCUPIED_0219",
+    "SLAM_OCCUPIED_0222",
+    "SLAM_OCCUPIED_0225",
+    "SLAM_OCCUPIED_0228"
+  ],
+  "target_machinery": "INDUSTRIAL_MACHINERY_04",
+  "slam_wall_half_width_m": 0.4,
+  "no_go_half_width_m": 0.2,
+  "machinery_connector_requested_slope": 1.7,
+  "machinery_connector_actual_slope": 1.7142857142857142,
+  "machinery_connector_start_grid": [
+    90,
+    89
+  ],
+  "machinery_connector_end_grid": [
+    83,
+    77
+  ],
+  "no_go_region_cells": 24,
+  "slam_wall_region_cells": 64,
+  "machinery_connector_region_cells": 42,
+  "surface_cells": 121,
+  "surface_area_m2": 4.840000000000001,
+  "rectangles": 23,
+  "ignition_mode": "surface_temperature",
+  "ignition_temperature_c": 250.0,
+  "material_density_kg_m3": 150.0,
+  "material_specific_heat_kj_kg_k": 1.4,
+  "material_conductivity_w_m_k": 0.08,
+  "material_thickness_m": 0.006,
+  "stack_height_m": 0.6,
+  "hrrpua_kw_m2": 300.0,
+  "local_ignition_ramp_s": 20.0,
+  "burn_duration_s": 480.0,
+  "minimum_requested_burn_duration_s": 420.0,
+  "roof_vent_xb": [
+    2.0,
+    4.0,
+    18.0,
+    20.0,
+    3.0,
+    3.0
+  ]
+}

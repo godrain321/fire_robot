@@ -1,0 +1,406 @@
+{
+  "coarse_counts": {
+    "blocked": 11010,
+    "free": 4494,
+    "machinery": 82,
+    "no_go": 1154,
+    "occupied": 686,
+    "unknown": 9048
+  },
+  "exit_markers": [
+    {
+      "cell_count": 21,
+      "height_m": 3.0,
+      "name": "EXIT1",
+      "rectangles": [
+        [
+          43,
+          44,
+          20,
+          22
+        ],
+        [
+          43,
+          45,
+          22,
+          23
+        ],
+        [
+          44,
+          45,
+          23,
+          24
+        ],
+        [
+          44,
+          46,
+          24,
+          25
+        ],
+        [
+          45,
+          47,
+          25,
+          26
+        ],
+        [
+          46,
+          47,
+          26,
+          27
+        ],
+        [
+          46,
+          48,
+          27,
+          28
+        ],
+        [
+          47,
+          48,
+          28,
+          29
+        ],
+        [
+          47,
+          49,
+          29,
+          30
+        ],
+        [
+          48,
+          49,
+          30,
+          31
+        ],
+        [
+          48,
+          50,
+          31,
+          32
+        ],
+        [
+          49,
+          51,
+          32,
+          33
+        ],
+        [
+          50,
+          51,
+          33,
+          34
+        ]
+      ],
+      "reference_fds": [
+        9.341228576660155,
+        5.433134185791016
+      ],
+      "requested_length_m": null,
+      "slope": 1.7647,
+      "thickness_m": 0.2,
+      "touches_slam_wall_both_ends": true,
+      "xb_xy": [
+        8.6,
+        10.200000000000001,
+        4.0,
+        6.800000000000001
+      ]
+    },
+    {
+      "cell_count": 8,
+      "height_m": 3.0,
+      "name": "EXIT2",
+      "rectangles": [
+        [
+          112,
+          114,
+          58,
+          59
+        ],
+        [
+          111,
+          113,
+          59,
+          60
+        ],
+        [
+          109,
+          111,
+          60,
+          61
+        ],
+        [
+          108,
+          110,
+          61,
+          62
+        ]
+      ],
+      "reference_fds": [
+        22.2,
+        12.0
+      ],
+      "requested_length_m": 1.2,
+      "slope": -0.5667,
+      "thickness_m": 0.2,
+      "touches_slam_wall_both_ends": null,
+      "xb_xy": [
+        21.6,
+        22.8,
+        11.600000000000001,
+        12.4
+      ]
+    },
+    {
+      "cell_count": 11,
+      "height_m": 3.0,
+      "name": "EXIT3",
+      "rectangles": [
+        [
+          34,
+          36,
+          86,
+          87
+        ],
+        [
+          35,
+          36,
+          87,
+          88
+        ],
+        [
+          35,
+          37,
+          88,
+          89
+        ],
+        [
+          36,
+          37,
+          89,
+          90
+        ],
+        [
+          36,
+          38,
+          90,
+          91
+        ],
+        [
+          37,
+          38,
+          91,
+          92
+        ],
+        [
+          37,
+          39,
+          92,
+          93
+        ]
+      ],
+      "reference_fds": [
+        7.226145835876465,
+        17.7599793548584
+      ],
+      "requested_length_m": null,
+      "slope": 1.7647,
+      "thickness_m": 0.2,
+      "touches_slam_wall_both_ends": true,
+      "xb_xy": [
+        6.800000000000001,
+        7.800000000000001,
+        17.2,
+        18.6
+      ]
+    }
+  ],
+  "exits_sha256": "876acf139642491854fc3437faf5ebcec309125a86242ebb36d29d09e4e226b5",
+  "fds_extent_m": [
+    27.200000000000003,
+    22.8
+  ],
+  "fds_grid_shape_yx": [
+    114,
+    136
+  ],
+  "fds_height_m": 3.0,
+  "fds_resolution_m": 0.2,
+  "machinery": {
+    "coarse_cells": 82,
+    "height_m": 1.2,
+    "rectangles": 16,
+    "source_components": [
+      {
+        "name": "INDUSTRIAL_MACHINERY_01",
+        "outline_dilation_cells": 1,
+        "source_cells": 94,
+        "source_pixel_bbox": [
+          398,
+          412,
+          363,
+          373
+        ]
+      },
+      {
+        "name": "INDUSTRIAL_MACHINERY_02",
+        "outline_dilation_cells": 1,
+        "source_cells": 89,
+        "source_pixel_bbox": [
+          337,
+          350,
+          333,
+          343
+        ]
+      },
+      {
+        "name": "INDUSTRIAL_MACHINERY_03",
+        "outline_dilation_cells": 1,
+        "source_cells": 353,
+        "source_pixel_bbox": [
+          400,
+          422,
+          167,
+          197
+        ]
+      },
+      {
+        "name": "INDUSTRIAL_MACHINERY_04",
+        "outline_dilation_cells": 1,
+        "source_cells": 300,
+        "source_pixel_bbox": [
+          331,
+          351,
+          137,
+          163
+        ]
+      }
+    ]
+  },
+  "mesh_cell_count": 232560,
+  "mesh_ijk": [
+    136,
+    114,
+    15
+  ],
+  "no_go_zones": {
+    "coarse_cells": 1154,
+    "count": 1,
+    "names": [
+      "industrial_machinery_no_go_1"
+    ],
+    "source_cells": 16830
+  },
+  "obstacle_rectangles": {
+    "machinery": 16,
+    "no_go": 59,
+    "occupied": 277,
+    "total": 643,
+    "unknown": 291
+  },
+  "obstacles_sha256": "20f371cf195f8191a10732f10a0dcb07287768efa28c6cb19b65573f6c25d213",
+  "scenario": {
+    "cardboard_boxes": {
+      "enabled": true,
+      "estimated_full_spread_time_s": 425.7346591481601,
+      "excludes_blocked_geometry": true,
+      "extends_to_upper_slam_wall": true,
+      "follows_right_no_go_wall": true,
+      "hrrpua_kw_m2": 300.0,
+      "maximum_spread_distance_m": 3.405877273185281,
+      "nearest_wall_goal_grid": [
+        83,
+        78
+      ],
+      "origin_fds": [
+        18.900000000000002,
+        14.3
+      ],
+      "overlaps_oil_surface": false,
+      "path_cells": 47,
+      "reaches_right_no_go_wall": true,
+      "reaches_slam_wall": true,
+      "rectangles": 13,
+      "right_no_go_goal_grid": [
+        105,
+        75
+      ],
+      "spread_rate_m_s": 0.008,
+      "surface_area_m2": 5.520000000000001,
+      "surface_cells": 138,
+      "target_machinery": "INDUSTRIAL_MACHINERY_04"
+    },
+    "distance_reference_to_machinery_m": 3.398382758016647,
+    "estimated_full_spread_time_s": 113.5292424395093,
+    "fire_enabled": true,
+    "hrrpua_kw_m2": 1000.0,
+    "id": "MACHINERY_OIL_FIRE",
+    "ignition_center_fds": [
+      19.900000000000002,
+      13.700000000000001
+    ],
+    "ignition_distance_to_machinery_m": 0.5008324129743578,
+    "maximum_spread_distance_m": 3.405877273185279,
+    "oil_spill_area_m2": 6.280000000000001,
+    "oil_spill_bbox": [
+      18.8,
+      22.8,
+      11.4,
+      15.0
+    ],
+    "oil_spill_cells": 157,
+    "oil_spill_excludes_blocked_and_no_go": true,
+    "oil_spill_radius_m": 1.2,
+    "oil_spill_rectangles": 22,
+    "oil_spread_rate_m_s": 0.03,
+    "selected_machinery": "INDUSTRIAL_MACHINERY_03",
+    "selected_machinery_center_fds": [
+      20.383194061279298,
+      13.568255531311035
+    ],
+    "selection_reference_fds": [
+      23.0,
+      11.4
+    ],
+    "target_exit_approach_covered_by_oil": true,
+    "target_exit_fire_approach_grid": [
+      110,
+      59
+    ],
+    "target_exit_semantic_grid": [
+      110,
+      60
+    ],
+    "wall_follow_path_cells": 31,
+    "wall_follow_target_exit": "EXIT2"
+  },
+  "scenario_sha256": "01203477b6f829059d28465ba54ddc30272df98327305bc0c3ca0cd5f8a14349",
+  "source_counts": {
+    "free": 95625,
+    "occupied": 5608,
+    "unknown": 144746
+  },
+  "source_extent_m": [
+    27.150000000000002,
+    22.650000000000002
+  ],
+  "source_map": "fire_robot_rpi/inno_jazzy_ws/maps/fire_demo_20260729_182054.pgm",
+  "source_no_go_sha256": "9c0c1294843a40d88903f7ea742681af1d649376991a09e6a478184bb8ea527c",
+  "source_no_go_zones": "fire_robot_rpi/maps/no_go_zones.yaml",
+  "source_sha256": "8a97294b1be8b698a4e0897a3337bf93ec8625505c15fc50bc84b3141d9e71a8",
+  "source_shape_cells": [
+    453,
+    543
+  ],
+  "wall_simplification": {
+    "allow_derived_spike_cleanup": true,
+    "contour_tolerance_m": 0.1,
+    "enabled": true,
+    "free_cells_changed_to_wall": 16567,
+    "inaccessible_cells_changed_to_free": 943,
+    "minimum_free_component_area_m2": 0.16,
+    "original_inaccessible_cells": 150354,
+    "source_cells_changed": 2851
+  }
+}

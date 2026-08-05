@@ -1,0 +1,63 @@
+# Scenario objects are intentionally separate from factory_v2.fds.
+fire:
+  enabled: true
+  id: MACHINERY_OIL_FIRE
+  selection_reference_fds: [23.0, 11.4]
+  machine_selection: nearest_to_reference
+  hrrpua_kw_m2: 1000.0
+  oil_spill:
+    radius_m: 1.2
+    spread_rate_m_s: 0.03
+    follow_no_go_wall_to_exit: EXIT2
+    wall_follow_weight: 4.0
+    path_half_width_m: 0.40
+    exit_block_radius_m: 0.60
+  cardboard_boxes:
+    enabled: true
+    target_machinery: INDUSTRIAL_MACHINERY_04
+    wall_obstacle_ids:
+      - NO_GO_ZONE_0050
+      - NO_GO_ZONE_0051
+      - NO_GO_ZONE_0052
+      - NO_GO_ZONE_0053
+      - NO_GO_ZONE_0054
+      - NO_GO_ZONE_0055
+      - NO_GO_ZONE_0056
+      - NO_GO_ZONE_0057
+      - NO_GO_ZONE_0058
+      - SLAM_OCCUPIED_0211
+      - SLAM_OCCUPIED_0214
+      - SLAM_OCCUPIED_0217
+      - SLAM_OCCUPIED_0219
+      - SLAM_OCCUPIED_0222
+      - SLAM_OCCUPIED_0225
+      - SLAM_OCCUPIED_0228
+    no_go_path_half_width_m: 0.20
+    slam_wall_path_half_width_m: 0.40
+    machinery_connector_half_width_m: 0.20
+    machinery_connector_slope: 1.70
+    machinery_connector_x_run_m: 1.40
+    # Effective corrugated-cardboard properties. These are deliberately kept
+    # configurable because flute geometry, basis weight, and moisture vary.
+    material_density_kg_m3: 150.0
+    material_specific_heat_kj_kg_k: 1.40
+    material_conductivity_w_m_k: 0.08
+    material_thickness_m: 0.006
+    ignition_temperature_c: 250.0
+    hrrpua_kw_m2: 300.0
+    local_ignition_ramp_s: 20.0
+    burn_duration_s: 480.0
+    stack_height_m: 0.60
+  roof_vent:
+    enabled: true
+    # Must lie on the ZMAX=3.0 m exterior MESH boundary.
+    xb: [2.0, 4.0, 18.0, 20.0, 3.0, 3.0]
+  ramp:
+    - {time_s: 0.0, fraction: 0.0}
+    - {time_s: 5.0, fraction: 1.0}
+    - {time_s: 180.0, fraction: 1.0}
+protected_geometry:
+  obstacles_sha256: 7fe0d6f96320efb7c6af7452389139dd221436bb7f5126427fa52d62126caab6
+  exits_sha256: 6c1df3d09e30d71f974fd2b2b69dd240f3c2dcb32df16ad75a993c7fb7a679c5
+victims: []
+dynamic_obstacles: []
