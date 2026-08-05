@@ -138,3 +138,11 @@ def test_ground_truth_loads_mock_temperature_and_co(monkeypatch, tmp_path):
     assert selected_time == 0.0
     exposure = environment.evaluate_exposure(13.0, 16.0, 1.3, 0.0)
     assert exposure.co_ppm == 1000.0
+    temperature_yx, co_yx, map_time = environment.sample_map_yx(
+        np.asarray([1.8, 30.0]), np.asarray([5.6, 28.0]), 1.3, 0.0
+    )
+    assert temperature_yx.shape == (2, 2)
+    assert co_yx.shape == (2, 2)
+    assert np.all(temperature_yx == 25.0)
+    assert np.all(co_yx == 1000.0)
+    assert map_time == 0.0

@@ -224,3 +224,28 @@ class FDSGroundTruthEnvironment:
             temperature_time=float(self._temperature_times[ti]),
             co_time=float(self._co_times[ci]),
         )
+
+    def sample_map_yx(
+        self, x_world: np.ndarray, y_world: np.ndarray,
+        height: float, fds_time: float,
+    ) -> tuple[np.ndarray, np.ndarray, float]:
+        """Return an evaluation-only FDS plane in ``[y,x]`` planner order.
+
+        The caller must not pass these complete Ground Truth arrays to mapping
+        or planning. Virtual sensors continue to query this facade directly.
+        """
+        targets_x = np.asarray(x_world, dtype=float)
+        targets_y = np.asarray(y_world, dtype=float)
+        if targets_x.ndim != 1 or targets_y.ndim != 1:
+            raise ValueError("sample_map_yx coordinates must be 1-D")
+        ti = self._nearest_index(self._temperature_times, fds_time)
+        ci = self._nearest_index(self._co_times, fds_time)
+        tz = self._nearest_index(self._temperature_z, height)
+        tx = np.abs(self._temperature_x[:, None] - targets_x[None, :]).argmin(axis=0)
+        ty = np.abs(self._temperature_y[:, None] - targets_y[None, :]).argmin(axis=0)
+        cx = np.abs(self._co_x[:, None] - targets_x[None, :]).argmin(axis=0)
+        cy = np.abs(self._co_y[:, None] - targets_y[None, :]).argmin(axis=0)
+        temperature_xy = self._ground_truth_temperature_xyz[ti, :, :, tz]
+        temperature_yx = temperature_xy[np.ix_(tx, ty)].T.copy()
+        co_yx = self._ground_truth_co_yx[ci][np.ix_(cy, cx)].copy()
+        return temperature_yx, co_yx, float(self._temperature_times[ti])

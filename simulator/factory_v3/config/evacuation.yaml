@@ -16,21 +16,51 @@ robot_start:
 
 # TODO temporary until a scenario-specific victim pose is supplied.
 humans:
-  - {id: victim_1, x: 16.0, y: 15.0}
+  # Coordinates are factory_v3 FDS world metres.
+  - {id: victim_1, x: 16.0, y: 15.0, initial_status: undetected}
+dynamic_obstacles: []
 human_detection_range_m: 10.0
 victim_approach_distance_m: 1.0
 search_waypoint: {x: 16.0, y: 15.0}
+
+mission:
+  # victim_reached_distance_m reuses victim_approach_distance_m above.
+  exit_reached_distance_m: 1.0
+  victim_wait_timeout_s: 10.0
+  max_replan_count: 5
+
+travel_history:
+  enabled: true
+  record_on_new_grid_cell: true
+  min_record_distance_m: 0.4
+  direction_change_threshold_deg: 35.0
+  max_points: 10000
+  record_during_return: false
+  simplify_reverse_path: true
+
+return_path:
+  enabled: true
+  validate_before_start: true
+  validate_during_return: true
+  lookahead_distance_m: 1.0
+  path_deviation_tolerance_m: 0.5
+  prefer_normal_planner: true
+  allow_history_fallback: true
+  # Older observations are uncertain; no time-decay model is assumed.
+  max_observation_age_s: 10.0
 
 # Marker coordinates come from semantic_points.yaml. Approach points are
 # explicit free cells on the building-interior side of each solid marker.
 exits:
   - id: EXIT1
+    initial_status: unknown
     marker: {x: 9.3476007524, y: 18.2045725287}
     approach: {x: 9.4, y: 17.4}
   - id: EXIT2
+    initial_status: unknown
     marker: {x: 21.0918754002, y: 9.4615073998}
     approach: {x: 21.0, y: 9.8}
   - id: EXIT3
+    initial_status: unknown
     marker: {x: 19.0071266790, y: 26.1492717487}
     approach: {x: 19.0, y: 25.4}
-

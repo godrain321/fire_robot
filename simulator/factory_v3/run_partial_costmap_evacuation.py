@@ -20,6 +20,9 @@ from mapping.partial_costmap import (
     PartialFireCostmap,
     path_has_new_block,
 )
+from mission.mission_manager import MissionEvent, MissionManager, MissionState
+from navigation.return_path_planner import ReturnPathConfig, ReturnPathPlanner
+from navigation.travel_history import TravelHistory, TravelHistoryConfig
 from planner.a_star import weighted_a_star_with_escape
 from robot.path_follower import RobotState, ReplannablePathFollower
 from sensors.mq135_sensor import MQ135Config, MQ135Sensor
@@ -30,6 +33,8 @@ from visualization.partial_costmap_viewers import (
     PygameSimulationViewer,
     show_debug_costmaps,
 )
+from world.entities import ExitStatus, VictimStatus
+from world.world_state import WorldState
 
 
 @dataclass
@@ -48,6 +53,10 @@ class SimulationMetrics:
     ground_truth_co: list[float] = field(default_factory=list)
     detected_victim: str | None = None
     selected_exit: str | None = None
+
+
+class _HistoryReturnPreferred(RuntimeError):
+    """Internal control signal for an explicitly configured fallback policy."""
 
 
 def _finite_stats(values: list[float]) -> tuple[str, str]:
@@ -69,6 +78,7 @@ def _combine_updates(*updates):
 
 def _viewer_snapshot(
     fds_time, thermal, co_text, metrics, last_replan_reason, status,
+    mission_state, navigation_mode="NORMAL",
 ):
     """Create display-only scalar state without feeding it back to simulation."""
     path_cost = (
@@ -85,6 +95,8 @@ def _viewer_snapshot(
         "observed_ratio": 0.0,  # Filled by the caller's belief in draw().
         "path_cost": path_cost,
         "status": status,
+        "mission_state": mission_state.name,
+        "navigation_mode": navigation_mode,
     }
 
 
@@ -137,6 +149,13 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     ground_truth = FDSGroundTruthEnvironment(
         args.fds_file, args.temperature_npz, args.fds_dir
     )
+    mission = MissionManager(
+        victim_reached_distance_m=args.victim_approach_distance,
+        exit_reached_distance_m=args.exit_reached_distance,
+        victim_wait_timeout_s=args.victim_wait_timeout,
+        max_replan_count=args.max_mission_replans,
+    )
+    print(f"Mission state: {mission.current_state.name}")
     mesh_xb, obstacles, holes = load_factory_geometry(args.fds_file)
     grid_map = GridMap(
         mesh_xb, obstacles, holes, config.grid_resolution,
@@ -144,6 +163,26 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     )
     static_map = np.asarray(grid_map.occupancy, dtype=bool)
     belief = PartialFireCostmap(grid_map, static_map, config)
+    world = WorldState.from_scenario(args.scenario, grid_map, config)
+    # Existing detector and viewer APIs remain dictionary-based adapters.
+    args.humans = world.legacy_humans()
+    args.exits = world.legacy_exits()
+    travel_history = TravelHistory(
+        world.map_metadata, TravelHistoryConfig.from_mapping(args.travel_history_config)
+    )
+    return_planner = ReturnPathPlanner(
+        world.map_metadata, ReturnPathConfig.from_mapping(args.return_path_config)
+    )
+    world.attach_travel_history(travel_history)
+    world.record_robot_position(args.start, sim_time=0.0)
+    map_x = np.asarray([
+        world.map_metadata.grid_to_world(col, 0)[0]
+        for col in range(world.map_metadata.width)
+    ])
+    map_y = np.asarray([
+        world.map_metadata.grid_to_world(0, row)[1]
+        for row in range(world.map_metadata.height)
+    ])
     for name, point in (("robot_start", args.start), ("search_waypoint", args.search_waypoint)):
         _validate_free_point(name, point, grid_map)
     for human in args.humans:
@@ -168,6 +207,8 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     active_victim = None
     victim_reached = False
     selected_exit = None
+    returning_by_history = False
+    blocked_return_grid = None
     detected_ids: set[str] = set()
     trajectory = [(state.x, state.y)]
     latest_thermal = np.full((24, 32), 25.0)
@@ -181,6 +222,56 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     previous_grid = grid_map.world_to_grid(state.x, state.y)
     latest_newly_observed_cells: set[tuple[int, int]] = set()
     last_replan_reason = "none"
+
+    def request_history_return(reason: str) -> bool:
+        nonlocal goal, returning_by_history, blocked_return_grid
+        nonlocal status, no_path_active
+        mission.handle_event(
+            MissionEvent.RETURN_REQUESTED,
+            sim_time=sim_elapsed,
+            reason=reason,
+        )
+        return_plan = return_planner.create_plan(
+            travel_history, (state.x, state.y),
+            cost_map=belief.final_cost_map,
+            static_obstacle_map=belief.static_obstacle_map,
+            dynamic_obstacle_map=world.dynamic_obstacle_mask(),
+            estimated_fire_map=world.estimated_fire_map,
+            created_at=sim_elapsed,
+        )
+        if return_plan.success:
+            mission.handle_event(
+                MissionEvent.RETURN_PATH_CREATED,
+                path=return_plan.path_grid,
+                sim_time=sim_elapsed,
+            )
+            world.set_active_return_plan(return_plan)
+            follower.set_path(
+                return_plan.path_grid,
+                goal_world=return_plan.path_world[-1],
+            )
+            if active_victim is not None:
+                victim = world.get_victim(active_victim["id"])
+                if victim.status is VictimStatus.MOVABLE:
+                    world.update_victim_status(
+                        victim.victim_id, VictimStatus.EVACUATING,
+                        sim_time=sim_elapsed,
+                    )
+            goal = return_plan.path_world[-1]
+            returning_by_history = True
+            blocked_return_grid = None
+            status = "RETURNING_BY_HISTORY"
+            no_path_active = False
+            return True
+        mission.handle_event(
+            MissionEvent.RETURN_FAILED,
+            sim_time=sim_elapsed,
+            reason=return_plan.failure_reason.value,
+        )
+        blocked_return_grid = return_plan.blocked_grid
+        status = f"RETURN_FAILED: {return_plan.failure_reason.value}"
+        no_path_active = True
+        return False
 
     pygame_viewer = None
     thermal_viewer = None
@@ -206,6 +297,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             if paused:
                 continue
         fds_time = config.selected_fds_start_time + sim_elapsed
+        world.set_simulation_time(sim_elapsed)
         newly_blocked = set()
         sensor_due = sim_elapsed - last_sensor_time >= config.sensor_update_interval_seconds - 1e-9
         if sensor_due:
@@ -232,6 +324,46 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             _, newly_blocked = _combine_updates(
                 thermal_update, co_update
             )
+            world.estimated_fire_map.sync_from_belief(belief)
+            if (
+                returning_by_history
+                and return_planner.config.validate_during_return
+                and world.active_return_plan is not None
+            ):
+                rechecked = return_planner.validate_plan(
+                    world.active_return_plan,
+                    cost_map=belief.final_cost_map,
+                    static_obstacle_map=belief.static_obstacle_map,
+                    dynamic_obstacle_map=world.dynamic_obstacle_mask(),
+                    estimated_fire_map=world.estimated_fire_map,
+                    current_time=sim_elapsed,
+                    start_index=max(0, follower.waypoint_index - 1),
+                    current_position_world=(state.x, state.y),
+                )
+                if not rechecked.success:
+                    mission.handle_event(
+                        MissionEvent.RETURN_PATH_INVALIDATED,
+                        sim_time=sim_elapsed,
+                        reason=rechecked.failure_reason.value,
+                    )
+                    follower.clear()
+                    world.clear_active_return_plan()
+                    returning_by_history = False
+                    blocked_return_grid = rechecked.blocked_grid
+                    status = f"RETURN_BLOCKED: {rechecked.failure_reason.value}"
+                    no_path_active = True
+                    # TODO(stage 4): evaluate a normal costmap A* retry, then a
+                    # freshly trimmed history return. Until that policy exists,
+                    # remaining stopped is safer than inventing a direct path.
+            gt_temperature, gt_co, gt_time = ground_truth.sample_map_yx(
+                map_x, map_y, config.robot_height, fds_time
+            )
+            gt_observed = np.isfinite(gt_temperature) | np.isfinite(gt_co)
+            gt_last_time = np.full(gt_temperature.shape, np.nan, dtype=float)
+            gt_last_time[gt_observed] = gt_time
+            world.ground_truth_fire_map.replace_layers(
+                gt_temperature, gt_co, gt_observed, gt_last_time
+            )
             newly_observed_mask = belief.observed_mask & ~observed_before
             latest_newly_observed_cells = {
                 (gx, gy) for gy, gx in np.argwhere(newly_observed_mask)
@@ -251,6 +383,25 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         detected_ids.update(item["id"] for item in detections)
         if active_victim is None and detections:
             active_victim = detections[0]
+            victim = world.get_victim(active_victim["id"])
+            world.update_victim_status(
+                victim.victim_id, VictimStatus.DETECTED,
+                sim_time=sim_elapsed,
+                distance_from_robot_m=active_victim["distance"],
+            )
+            world.update_victim_status(
+                victim.victim_id, VictimStatus.APPROACHING, sim_time=sim_elapsed
+            )
+            transition = mission.handle_event(
+                MissionEvent.VICTIM_DETECTED,
+                victim_id=active_victim["id"],
+                victim_position=(active_victim["x"], active_victim["y"]),
+                sim_time=sim_elapsed,
+            )
+            print(
+                f"Mission: {transition.previous_state.name} --{transition.event.name}--> "
+                f"{transition.next_state.name}: {transition.reason}"
+            )
             metrics.detected_victim = active_victim["id"]
             goal = (active_victim["x"], active_victim["y"])
             follower.clear()
@@ -259,16 +410,101 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             state.x - active_victim["x"], state.y - active_victim["y"]
         ) <= args.victim_approach_distance:
             victim_reached = True
-            _, exit_id, exit_goal = _select_safest_exit(state, args.exits, belief)
-            selected_exit = exit_id
-            metrics.selected_exit = exit_id
-            goal = exit_goal
-            follower.clear()
-            status = f"EVACUATING VIA {exit_id}"
+            victim = world.get_victim(active_victim["id"])
+            world.update_victim_status(
+                victim.victim_id, VictimStatus.REACHED, sim_time=sim_elapsed
+            )
+            mission.handle_event(MissionEvent.VICTIM_REACHED, sim_time=sim_elapsed)
+            print("대피 경로를 생성합니다. 물수건으로 코와 입을 막고 저를 따라오십시오")
+            mission.handle_event(
+                MissionEvent.ANNOUNCEMENT_FINISHED, sim_time=sim_elapsed
+            )
+            world.update_victim_status(
+                victim.victim_id, VictimStatus.WAITING, sim_time=sim_elapsed
+            )
+            # TODO: Replace this immediate event with tracked victim motion data.
+            mission.handle_event(
+                MissionEvent.VICTIM_STARTED_MOVING,
+                sim_time=sim_elapsed,
+                reason="legacy simulation assumes the victim follows immediately",
+            )
+            world.update_victim_status(
+                victim.victim_id, VictimStatus.MOVABLE, sim_time=sim_elapsed
+            )
+            try:
+                if (
+                    return_planner.config.enabled
+                    and return_planner.config.allow_history_fallback
+                    and not return_planner.config.prefer_normal_planner
+                    and not world.estimated_fire_map.blocked_mask.any()
+                ):
+                    raise _HistoryReturnPreferred(
+                        "configured policy prefers recorded entry route when no fire risk is known"
+                    )
+                exit_cost, exit_id, exit_goal = _select_safest_exit(
+                    state, args.exits, belief
+                )
+            except _HistoryReturnPreferred as exc:
+                selected_exit = None
+                follower.clear()
+                request_history_return(str(exc))
+            except RuntimeError as exc:
+                for exit_item in world.exits.values():
+                    world.update_exit_status(
+                        exit_item.exit_id, ExitStatus.BLOCKED,
+                        sim_time=sim_elapsed,
+                        reason="no path in current partial costmap",
+                    )
+                mission.handle_event(
+                    MissionEvent.PATH_PLANNING_FAILED,
+                    sim_time=sim_elapsed,
+                    reason=str(exc),
+                    failed_exits={item["id"]: "unreachable" for item in args.exits},
+                )
+                # No candidate exit exists, so a second failed retry closes the
+                # state-machine attempt without changing the legacy planner.
+                mission.handle_event(
+                    MissionEvent.PATH_PLANNING_FAILED,
+                    sim_time=sim_elapsed,
+                    reason="all configured exits are unreachable",
+                )
+                selected_exit = None
+                follower.clear()
+                status = f"NO_PATH: {exc}"
+                no_path_active = True
+                if (
+                    return_planner.config.enabled
+                    and return_planner.config.allow_history_fallback
+                ):
+                    request_history_return(
+                        "normal exit planning failed; evaluating recorded entry path"
+                    )
+            else:
+                selected_exit = exit_id
+                metrics.selected_exit = exit_id
+                goal = exit_goal
+                world.update_exit_status(
+                    exit_id, ExitStatus.USABLE, sim_time=sim_elapsed,
+                    path_cost=exit_cost,
+                )
+                world.update_victim_status(
+                    victim.victim_id, VictimStatus.EVACUATING,
+                    sim_time=sim_elapsed, assigned_exit_id=exit_id,
+                )
+                follower.clear()
+                status = f"PLANNING EVACUATION VIA {exit_id}"
 
         remaining_path = follower.remaining_grid_path()
         replan_reason = None
-        if not remaining_path:
+        if mission.current_state in (
+            MissionState.NO_SAFE_EXIT,
+            MissionState.RETURN_PATH_BLOCKED,
+            MissionState.RETURN_FAILED,
+        ) or returning_by_history:
+            # TODO: A later sensor/costmap update may explicitly issue
+            # RETRY_REQUESTED. Until then, do not plan back to the victim goal.
+            replan_reason = None
+        elif not remaining_path:
             replan_reason = "initial_or_missing_path"
         elif path_has_new_block(remaining_path, newly_blocked):
             replan_reason = "new_risk_on_path"
@@ -280,6 +516,12 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             replan_reason = "distance"
 
         if replan_reason is not None:
+            if mission.current_state is MissionState.REPLAN:
+                mission.handle_event(
+                    MissionEvent.RETRY_REQUESTED,
+                    sim_time=sim_elapsed,
+                    reason=f"planner retry triggered by {replan_reason}",
+                )
             start_grid = grid_map.world_to_grid(state.x, state.y)
             goal_grid = grid_map.world_to_grid(*goal)
             astar_started = time.perf_counter()
@@ -296,6 +538,15 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             last_replan_position = (state.x, state.y)
             if result.path:
                 follower.set_path(result.path, result.escape_path, goal_world=goal)
+                if mission.current_state is MissionState.PLAN_EVACUATION:
+                    exit_position = goal if selected_exit is not None else None
+                    mission.handle_event(
+                        MissionEvent.PATH_PLANNED,
+                        exit_id=selected_exit,
+                        exit_position=exit_position,
+                        path=result.path,
+                        sim_time=sim_elapsed,
+                    )
                 metrics.final_path_cost = result.total_cost
                 if metrics.first_path_cost is None:
                     metrics.first_path_cost = result.total_cost
@@ -303,6 +554,14 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                 no_path_active = False
             else:
                 follower.clear()
+                if mission.current_state is MissionState.PLAN_EVACUATION:
+                    mission.handle_event(
+                        MissionEvent.PATH_PLANNING_FAILED,
+                        sim_time=sim_elapsed,
+                        reason=result.reason,
+                        failed_exits={selected_exit: result.reason}
+                        if selected_exit else None,
+                    )
                 metrics.no_path_count += 1
                 status = f"NO_PATH: {result.reason}"
                 no_path_active = True
@@ -310,6 +569,11 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         moved, motion_status = follower.update(state, config.simulation_dt, belief.final_cost_map)
         metrics.travelled_distance += moved
         trajectory.append((state.x, state.y))
+        if moved > 0.0:
+            world.record_robot_position(
+                (state.x, state.y), sim_time=sim_elapsed,
+                is_returning=returning_by_history,
+            )
 
         current_grid = grid_map.world_to_grid(state.x, state.y)
         if grid_map.in_bounds(current_grid):
@@ -324,6 +588,13 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         exposure = ground_truth.evaluate_exposure(
             state.x, state.y, config.robot_height, fds_time
         )
+        if grid_map.in_bounds(current_grid):
+            world.ground_truth_fire_map.update_cell(
+                current_grid[0], current_grid[1],
+                temperature_c=exposure.temperature,
+                co_ppm=exposure.co_ppm,
+                sim_time=fds_time,
+            )
         metrics.ground_truth_temperatures.append(exposure.temperature)
         metrics.ground_truth_co.append(exposure.co_ppm)
         if current_grid != previous_grid and (
@@ -333,7 +604,30 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             metrics.threshold_entries += 1
         previous_grid = current_grid
 
-        if victim_reached and selected_exit is not None and follower.goal_reached(state, goal):
+        if (
+            victim_reached
+            and (selected_exit is not None or returning_by_history)
+            and follower.goal_reached(state, goal)
+        ):
+            world.update_victim_status(
+                active_victim["id"], VictimStatus.RESCUED,
+                sim_time=sim_elapsed,
+            )
+            remaining_victims = bool(world.get_unrescued_victims())
+            if returning_by_history:
+                mission.handle_event(
+                    MissionEvent.RETURN_COMPLETED,
+                    sim_time=sim_elapsed,
+                    remaining_victims=remaining_victims,
+                )
+                world.clear_active_return_plan()
+            else:
+                mission.handle_event(
+                    MissionEvent.EXIT_REACHED,
+                    exit_id=selected_exit,
+                    sim_time=sim_elapsed,
+                    remaining_victims=remaining_victims,
+                )
             status = "EVACUATION_SUCCESS"
             if pygame_viewer is not None:
                 pygame_viewer.draw(
@@ -341,9 +635,13 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     thermal_camera, latest_newly_observed_cells,
                     _viewer_snapshot(
                         fds_time, latest_thermal, latest_co_text, metrics,
-                        last_replan_reason, status,
+                        last_replan_reason, status, mission.current_state,
+                        "HISTORY_RETURN" if returning_by_history else "NORMAL",
                     ),
                     args.humans, args.exits, detected_ids,
+                    travel_history.get_points_world(),
+                    () if world.active_return_plan is None else world.active_return_plan.path_world[max(0, follower.waypoint_index - 1):],
+                    blocked_return_grid,
                 )
                 pygame_viewer.close()
             if thermal_viewer is not None:
@@ -358,8 +656,13 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     fds_time, latest_thermal, latest_co_text, metrics,
                     last_replan_reason,
                     status if no_path_active else motion_status,
+                    mission.current_state,
+                    "HISTORY_RETURN" if returning_by_history else "NORMAL",
                 ),
                 args.humans, args.exits, detected_ids,
+                travel_history.get_points_world(),
+                () if world.active_return_plan is None else world.active_return_plan.path_world[max(0, follower.waypoint_index - 1):],
+                blocked_return_grid,
             )
         sim_elapsed += config.simulation_dt
 
@@ -444,6 +747,7 @@ def apply_scenario_config(args):
     """Resolve all v3 paths and mission positions from one explicit YAML file."""
     config_path = args.scenario_config.resolve()
     scenario = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    args.scenario = scenario
     base = config_path.parent.parent
     args.fds_file = args.fds_file or base / scenario["fds_file"]
     args.temperature_npz = (
@@ -468,6 +772,16 @@ def apply_scenario_config(args):
     args.search_waypoint = _point(scenario["search_waypoint"])
     args.human_detection_range = float(scenario["human_detection_range_m"])
     args.victim_approach_distance = float(scenario["victim_approach_distance_m"])
+    mission_config = scenario.get("mission", {})
+    args.exit_reached_distance = float(
+        mission_config.get("exit_reached_distance_m", 1.0)
+    )
+    args.victim_wait_timeout = float(
+        mission_config.get("victim_wait_timeout_s", 10.0)
+    )
+    args.max_mission_replans = int(mission_config.get("max_replan_count", 5))
+    args.travel_history_config = scenario.get("travel_history", {})
+    args.return_path_config = scenario.get("return_path", {})
     return args
 
 

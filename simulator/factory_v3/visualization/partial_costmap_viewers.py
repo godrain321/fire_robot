@@ -53,6 +53,8 @@ class PygameSimulationViewer:
     BLOCKED = (220, 45, 50)
     PATH = (35, 225, 235)
     TRAJECTORY = (75, 135, 255)
+    TRAVEL_HISTORY = (245, 170, 45)
+    RETURN_PATH = (220, 80, 245)
     NEW_OBSERVATION = (255, 235, 80)
 
     def __init__(self, grid_map, config, title="Partial Costmap Evacuation") -> None:
@@ -166,6 +168,21 @@ class PygameSimulationViewer:
             points = [self.transform.world_to_screen(x, y) for x, y in trajectory]
             pygame.draw.lines(self.screen, self.TRAJECTORY, False, points, 3)
 
+    def _draw_travel_and_return(self, travel_history, return_path, blocked_grid):
+        if len(travel_history) >= 2:
+            points = [self.transform.world_to_screen(*item) for item in travel_history]
+            self.pygame.draw.lines(self.screen, self.TRAVEL_HISTORY, False, points, 3)
+        if len(return_path) >= 2:
+            points = [self.transform.world_to_screen(*item) for item in return_path]
+            self.pygame.draw.lines(self.screen, self.RETURN_PATH, False, points, 5)
+            self.pygame.draw.circle(self.screen, (255, 255, 255), points[1], 6)
+        if blocked_grid is not None and self.grid_map.in_bounds(blocked_grid):
+            point = self.transform.world_to_screen(
+                *self.grid_map.grid_to_world(*blocked_grid)
+            )
+            self.pygame.draw.line(self.screen, (255, 30, 30), (point[0] - 8, point[1] - 8), (point[0] + 8, point[1] + 8), 4)
+            self.pygame.draw.line(self.screen, (255, 30, 30), (point[0] - 8, point[1] + 8), (point[0] + 8, point[1] - 8), 4)
+
     def _draw_markers(self, state, start, goal, humans=(), exits=(), detected_ids=()):
         pygame = self.pygame
         start_p = self.transform.world_to_screen(*start)
@@ -233,6 +250,8 @@ class PygameSimulationViewer:
             f"Observed: {snapshot['observed_ratio']:.2f}%",
             f"Path cost: {snapshot['path_cost']}",
             f"Status: {snapshot['status']}",
+            f"Mission: {snapshot['mission_state']}",
+            f"Navigation: {snapshot['navigation_mode']}",
             "SPACE: pause/resume   ESC: quit",
         ]
         self.screen.blit(self.title_font.render("Simulation status", True, (245, 245, 245)), (x, y))
@@ -244,6 +263,7 @@ class PygameSimulationViewer:
     def draw(
         self, belief, state, start, goal, follower, trajectory, camera,
         newly_observed_cells, snapshot, humans=(), exits=(), detected_ids=(),
+        travel_history=(), return_path=(), blocked_return_grid=None,
     ) -> None:
         snapshot = dict(snapshot)
         snapshot["observed_ratio"] = float(belief.observed_mask.mean() * 100.0)
@@ -254,6 +274,9 @@ class PygameSimulationViewer:
             state, camera, newly_observed_cells, self.config.gas_update_radius
         )
         self._draw_paths(follower, trajectory)
+        self._draw_travel_and_return(
+            travel_history, return_path, blocked_return_grid
+        )
         self._draw_markers(state, start, goal, humans, exits, detected_ids)
         self.pygame.draw.rect(self.screen, (210, 210, 210), self.map_rect, 2)
         self._draw_mini_layer(
