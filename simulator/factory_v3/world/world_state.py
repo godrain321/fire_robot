@@ -87,6 +87,21 @@ class WorldState:
         self.latest_exit_evaluations: dict[str, Any] = {}
         self.exit_evaluation_history: list[tuple[Any, ...]] = []
         self.active_evacuation_plan = None
+        self.mission_start_position_world: tuple[float, float] | None = None
+        self.mission_entry_id: str | None = None
+        self.mission_entry_position_world: tuple[float, float] | None = None
+        self.hazard_knowledge_decision = None
+        self.active_route_decision = None
+        self.active_route_valid = False
+        self.active_route_invalid_reason: str | None = None
+        self.active_route_blocked_grid: tuple[int, int] | None = None
+        self.active_route_created_at: float | None = None
+        self.active_route_last_validated_at: float | None = None
+        self.active_route_costmap_revision: int | None = None
+        self.costmap_revision = 0
+        self.environment_revision = 0
+        self.route_replan_count = 0
+        self.final_route_failure_reason: str | None = None
 
     @classmethod
     def from_scenario(cls, scenario: dict[str, Any], grid_map, config) -> "WorldState":
@@ -138,6 +153,49 @@ class WorldState:
         if travel_history.map_metadata != self.map_metadata:
             raise ValueError("travel history metadata must match WorldState")
         self.travel_history = travel_history
+
+    def set_mission_entry(self, entry_id: str, position_world) -> None:
+        self.validate_position(position_world, label="mission entry")
+        self.mission_entry_id = str(entry_id)
+        self.mission_entry_position_world = (
+            float(position_world[0]), float(position_world[1])
+        )
+        if self.mission_start_position_world is None:
+            self.mission_start_position_world = self.mission_entry_position_world
+
+    def update_costmap_revision(self, revision: int) -> None:
+        if isinstance(revision, bool) or int(revision) < self.costmap_revision:
+            raise ValueError("costmap revision must be monotonic and non-negative")
+        self.costmap_revision = int(revision)
+
+    def set_active_route_decision(self, decision) -> None:
+        if not decision.success:
+            raise ValueError("cannot activate an unsuccessful route decision")
+        self.active_route_decision = decision
+        self.hazard_knowledge_decision = decision.hazard_knowledge
+        self.active_route_valid = True
+        self.active_route_invalid_reason = None
+        self.active_route_blocked_grid = None
+        self.active_route_created_at = decision.created_at
+        self.active_route_last_validated_at = decision.created_at
+        self.active_route_costmap_revision = decision.costmap_revision
+        self.final_route_failure_reason = None
+
+    def invalidate_active_route(self, reason: str, blocked_grid=None) -> None:
+        self.active_route_valid = False
+        self.active_route_invalid_reason = str(reason)
+        self.active_route_blocked_grid = (
+            None if blocked_grid is None
+            else (int(blocked_grid[0]), int(blocked_grid[1]))
+        )
+
+    def clear_active_route(self) -> None:
+        self.active_route_decision = None
+        self.active_route_valid = False
+
+    def record_route_validation(self, *, sim_time: float, costmap_revision: int) -> None:
+        self.active_route_last_validated_at = float(sim_time)
+        self.active_route_costmap_revision = int(costmap_revision)
 
     def record_robot_position(
         self, position_world, *, sim_time: float | None = None,
@@ -262,6 +320,7 @@ class WorldState:
         if sim_time is not None:
             obstacle.update(sim_time=sim_time)
         self.dynamic_obstacles[obstacle.obstacle_id] = obstacle
+        self.environment_revision += 1
 
     def get_dynamic_obstacle(self, obstacle_id: str) -> DynamicObstacle:
         try:
@@ -284,6 +343,7 @@ class WorldState:
                 obstacle.first_seen_at, obstacle.last_seen_at,
             ) = snapshot
             raise
+        self.environment_revision += 1
 
     def clear_dynamic_obstacle(self, obstacle_id: str, *, sim_time: float | None = None) -> None:
         self.update_dynamic_obstacle(
@@ -359,6 +419,21 @@ class WorldState:
             "latest_exit_evaluations": self.latest_exit_evaluations,
             "exit_evaluation_history": self.exit_evaluation_history,
             "active_evacuation_plan": None if self.active_evacuation_plan is None else self.active_evacuation_plan.to_dict(),
+            "mission_start_position_world": self.mission_start_position_world,
+            "mission_entry_id": self.mission_entry_id,
+            "mission_entry_position_world": self.mission_entry_position_world,
+            "hazard_knowledge_decision": self.hazard_knowledge_decision,
+            "active_route_decision": self.active_route_decision,
+            "active_route_valid": self.active_route_valid,
+            "active_route_invalid_reason": self.active_route_invalid_reason,
+            "active_route_blocked_grid": self.active_route_blocked_grid,
+            "active_route_created_at": self.active_route_created_at,
+            "active_route_last_validated_at": self.active_route_last_validated_at,
+            "active_route_costmap_revision": self.active_route_costmap_revision,
+            "costmap_revision": self.costmap_revision,
+            "environment_revision": self.environment_revision,
+            "route_replan_count": self.route_replan_count,
+            "final_route_failure_reason": self.final_route_failure_reason,
             "static_obstacle_map": self.static_obstacle_map,
             "dynamic_obstacles": self.dynamic_obstacles,
             "exits": self.exits,

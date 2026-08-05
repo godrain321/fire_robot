@@ -92,6 +92,9 @@ class PartialFireCostmap:
         self.blocked_mask = static.copy()
         self.final_cost_map = np.full(shape, config.base_cost, dtype=float)
         self.last_observed_time_map = np.full(shape, np.nan, dtype=float)
+        # Monotonic sensor-belief revision.  A revision requests inexpensive
+        # path validation; it does not by itself force a full replan.
+        self.revision = 0
         self.recalculate()
 
     @property
@@ -105,6 +108,8 @@ class PartialFireCostmap:
         self, changed: set[tuple[int, int]], old_blocked: np.ndarray
     ) -> BeliefUpdate:
         self.recalculate()
+        if changed:
+            self.revision += 1
         new_blocked = self.blocked_mask & ~old_blocked
         newly_blocked = {
             (gx, gy) for gy, gx in np.argwhere(new_blocked)

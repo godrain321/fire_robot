@@ -272,6 +272,9 @@ class PygameSimulationViewer:
             f"Status: {snapshot['status']}",
             f"Mission: {snapshot['mission_state']}",
             f"Navigation: {snapshot['navigation_mode']}",
+            f"Hazard knowledge: {snapshot.get('hazard_knowledge', 'UNDECIDED')}",
+            f"Strategy: {snapshot.get('evacuation_strategy', 'UNDECIDED')}",
+            f"Route failure: {snapshot.get('route_failure', 'none')}",
             f"Exit plan: {snapshot['exit_plan']}",
             "SPACE: pause/resume   ESC: quit",
         ]

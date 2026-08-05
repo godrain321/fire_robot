@@ -21,6 +21,7 @@ class MissionState(Enum):
     APPROACH_VICTIM = "Approaching victim"
     ANNOUNCE_EVACUATION = "Announcing evacuation guidance"
     PLAN_EVACUATION = "Planning evacuation"
+    EVALUATING_HAZARD_INFORMATION = "Evaluating sensor hazard knowledge"
     EVALUATING_EXITS = "Evaluating registered exits"
     ESCORT_VICTIM = "Escorting victim"
     EVACUATION_COMPLETE = "Evacuation complete"
@@ -32,6 +33,9 @@ class MissionState(Enum):
     RETURNING_BY_HISTORY = "Returning by recorded travel history"
     RETURN_PATH_BLOCKED = "Recorded return path blocked"
     RETURN_FAILED = "Recorded return failed"
+    REPLANNING_TO_ENTRANCE = "Replanning to original entrance"
+    RETURNING_TO_ENTRANCE = "Returning to original entrance by A*"
+    NO_SAFE_ROUTE = "No safe evacuation route"
     MISSION_ABORTED = "Mission aborted"
     ERROR = "Mission error"
 
@@ -60,6 +64,13 @@ class MissionEvent(Enum):
     NO_SAFE_EXIT_FOUND = "no_safe_exit_found"
     EVACUATION_PLAN_CREATED = "evacuation_plan_created"
     EVACUATION_PLAN_FAILED = "evacuation_plan_failed"
+    VICTIM_READY_FOR_EVACUATION = "victim_ready_for_evacuation"
+    HAZARD_INFORMATION_AVAILABLE = "hazard_information_available"
+    NO_HAZARD_INFORMATION = "no_hazard_information"
+    ACTIVE_PATH_INVALIDATED = "active_path_invalidated"
+    REPLAN_REQUESTED = "replan_requested"
+    ENTRANCE_ROUTE_CREATED = "entrance_route_created"
+    NO_SAFE_ROUTE_FOUND = "no_safe_route_found"
     MISSION_ABORTED = "mission_aborted"
     ERROR_OCCURRED = "error_occurred"
 
@@ -101,6 +112,7 @@ _TRANSITIONS: dict[MissionState, dict[MissionEvent, MissionState]] = {
         MissionEvent.SEARCH_RESUMED: MissionState.SEARCH_EXITS,
     },
     MissionState.PLAN_EVACUATION: {
+        MissionEvent.VICTIM_READY_FOR_EVACUATION: MissionState.EVALUATING_HAZARD_INFORMATION,
         MissionEvent.PATH_PLANNED: MissionState.ESCORT_VICTIM,
         MissionEvent.PATH_PLANNING_FAILED: MissionState.REPLAN,
         MissionEvent.EXIT_UNSAFE: MissionState.REPLAN,
@@ -109,6 +121,7 @@ _TRANSITIONS: dict[MissionState, dict[MissionEvent, MissionState]] = {
         MissionEvent.EVACUATION_PLAN_CREATED: MissionState.ESCORT_VICTIM,
     },
     MissionState.ESCORT_VICTIM: {
+        MissionEvent.ACTIVE_PATH_INVALIDATED: MissionState.REPLAN,
         MissionEvent.PATH_BLOCKED: MissionState.REPLAN,
         MissionEvent.EXIT_UNSAFE: MissionState.REPLAN,
         MissionEvent.EXIT_REACHED: MissionState.EVACUATION_COMPLETE,
@@ -118,6 +131,9 @@ _TRANSITIONS: dict[MissionState, dict[MissionEvent, MissionState]] = {
         MissionEvent.RETRY_REQUESTED: MissionState.PLAN_EVACUATION,
         MissionEvent.PATH_PLANNING_FAILED: MissionState.NO_SAFE_EXIT,
         MissionEvent.RETURN_REQUESTED: MissionState.PLAN_RETURN_BY_HISTORY,
+        MissionEvent.REPLAN_REQUESTED: MissionState.REPLANNING_TO_ENTRANCE,
+        MissionEvent.EXIT_EVALUATION_REQUESTED: MissionState.EVALUATING_EXITS,
+        MissionEvent.NO_SAFE_ROUTE_FOUND: MissionState.NO_SAFE_ROUTE,
     },
     MissionState.NO_SAFE_EXIT: {
         MissionEvent.RETRY_REQUESTED: MissionState.REPLAN,
@@ -130,10 +146,12 @@ _TRANSITIONS: dict[MissionState, dict[MissionEvent, MissionState]] = {
         MissionEvent.SAFE_EXIT_SELECTED: MissionState.PLAN_EVACUATION,
         MissionEvent.NO_SAFE_EXIT_FOUND: MissionState.NO_SAFE_EXIT,
         MissionEvent.EVACUATION_PLAN_FAILED: MissionState.NO_SAFE_EXIT,
+        MissionEvent.NO_SAFE_ROUTE_FOUND: MissionState.NO_SAFE_ROUTE,
     },
     MissionState.PLAN_RETURN_BY_HISTORY: {
         MissionEvent.RETURN_PATH_CREATED: MissionState.RETURNING_BY_HISTORY,
         MissionEvent.RETURN_FAILED: MissionState.RETURN_FAILED,
+        MissionEvent.NO_SAFE_ROUTE_FOUND: MissionState.NO_SAFE_ROUTE,
     },
     MissionState.RETURNING_BY_HISTORY: {
         MissionEvent.RETURN_PATH_INVALIDATED: MissionState.RETURN_PATH_BLOCKED,
@@ -142,9 +160,28 @@ _TRANSITIONS: dict[MissionState, dict[MissionEvent, MissionState]] = {
     MissionState.RETURN_PATH_BLOCKED: {
         MissionEvent.RETURN_REQUESTED: MissionState.PLAN_RETURN_BY_HISTORY,
         MissionEvent.RETURN_FAILED: MissionState.RETURN_FAILED,
+        MissionEvent.REPLAN_REQUESTED: MissionState.REPLANNING_TO_ENTRANCE,
+        MissionEvent.NO_SAFE_ROUTE_FOUND: MissionState.NO_SAFE_ROUTE,
     },
     MissionState.RETURN_FAILED: {
         MissionEvent.RETRY_REQUESTED: MissionState.PLAN_RETURN_BY_HISTORY,
+    },
+    MissionState.EVALUATING_HAZARD_INFORMATION: {
+        MissionEvent.HAZARD_INFORMATION_AVAILABLE: MissionState.EVALUATING_EXITS,
+        MissionEvent.NO_HAZARD_INFORMATION: MissionState.PLAN_RETURN_BY_HISTORY,
+        MissionEvent.NO_SAFE_ROUTE_FOUND: MissionState.NO_SAFE_ROUTE,
+    },
+    MissionState.REPLANNING_TO_ENTRANCE: {
+        MissionEvent.ENTRANCE_ROUTE_CREATED: MissionState.RETURNING_TO_ENTRANCE,
+        MissionEvent.EXIT_EVALUATION_REQUESTED: MissionState.EVALUATING_EXITS,
+        MissionEvent.NO_SAFE_ROUTE_FOUND: MissionState.NO_SAFE_ROUTE,
+    },
+    MissionState.RETURNING_TO_ENTRANCE: {
+        MissionEvent.ACTIVE_PATH_INVALIDATED: MissionState.REPLAN,
+        MissionEvent.RETURN_COMPLETED: MissionState.EVACUATION_COMPLETE,
+    },
+    MissionState.NO_SAFE_ROUTE: {
+        MissionEvent.RETRY_REQUESTED: MissionState.REPLAN,
     },
 }
 
@@ -172,6 +209,13 @@ _DEFAULT_REASONS = {
     MissionEvent.NO_SAFE_EXIT_FOUND: "all registered exits were rejected",
     MissionEvent.EVACUATION_PLAN_CREATED: "selected evacuation path activated",
     MissionEvent.EVACUATION_PLAN_FAILED: "evacuation planning failed",
+    MissionEvent.VICTIM_READY_FOR_EVACUATION: "victim is ready for final route selection",
+    MissionEvent.HAZARD_INFORMATION_AVAILABLE: "sensor-derived fire information is available",
+    MissionEvent.NO_HAZARD_INFORMATION: "no sensor-derived fire information exists",
+    MissionEvent.ACTIVE_PATH_INVALIDATED: "active route became unsafe",
+    MissionEvent.REPLAN_REQUESTED: "safe replanning requested after stopping movement",
+    MissionEvent.ENTRANCE_ROUTE_CREATED: "safe A* route to original entrance created",
+    MissionEvent.NO_SAFE_ROUTE_FOUND: "entry and registered exits have no safe route",
     MissionEvent.MISSION_ABORTED: "mission aborted by caller",
     MissionEvent.ERROR_OCCURRED: "mission error reported by caller",
 }
@@ -248,7 +292,11 @@ class MissionManager:
         proposed = _TRANSITIONS[self.current_state][event]
         if proposed is MissionState.REPLAN:
             if self.replan_count >= self.max_replan_count:
-                return MissionState.NO_SAFE_EXIT
+                return (
+                    MissionState.NO_SAFE_ROUTE
+                    if event is MissionEvent.ACTIVE_PATH_INVALIDATED
+                    else MissionState.NO_SAFE_EXIT
+                )
             self.replan_count += 1
         if event in (
             MissionEvent.EXIT_REACHED,

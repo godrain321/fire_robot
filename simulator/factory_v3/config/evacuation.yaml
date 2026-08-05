@@ -68,6 +68,27 @@ exit_selection:
   final_tie_breaker: exit_id
   float_tolerance: 1.0e-6
 
+# The mission entry position is robot_start; it is not inferred from the
+# nearest exit. Fire thresholds reuse PartialCostmapConfig (60 C, 1600 ppm).
+mission_entry_id: MISSION_ENTRY
+evacuation_route_selection:
+  enabled: true
+  no_fire_information_strategy: return_via_travel_history
+  fire_information_strategy: evaluate_all_exits
+  prefer_original_entrance_on_return_failure: true
+  evaluate_alternative_exits_on_entrance_failure: true
+
+path_validation:
+  validate_on_costmap_revision: true
+  validate_on_dynamic_obstacle_event: true
+  validate_on_hazard_update: true
+  stop_before_replanning: true
+
+replanning:
+  enabled: true
+  max_replan_attempts: 5
+  cooldown_seconds: 0.5
+
 # Marker coordinates come from semantic_points.yaml. Approach points are
 # explicit free cells on the building-interior side of each solid marker.
 exits:

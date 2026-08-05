@@ -6,9 +6,20 @@ from .return_path_planner import (
 from .travel_history import (
     TravelHistory, TravelHistoryConfig, TravelPoint, TravelRecordReason,
 )
+from .evacuation_strategy_selector import (
+    EvacuationRouteDecision, EvacuationRouteSelectionConfig,
+    EvacuationStrategy, EvacuationStrategySelector,
+    HazardKnowledgeDecision, HazardKnowledgeState, HazardKnowledgeTracker,
+    PathValidationConfig, ReplanningConfig, RouteFailureReason,
+)
 
 __all__ = [
     "ReturnFailureReason", "ReturnPathPlan", "ReturnPathPlanner",
     "TravelHistory", "TravelHistoryConfig", "TravelPoint",
     "TravelRecordReason",
+    "EvacuationRouteDecision", "EvacuationRouteSelectionConfig",
+    "EvacuationStrategy", "EvacuationStrategySelector",
+    "HazardKnowledgeDecision", "HazardKnowledgeState",
+    "HazardKnowledgeTracker", "PathValidationConfig", "ReplanningConfig",
+    "RouteFailureReason",
 ]
