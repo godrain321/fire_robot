@@ -12,6 +12,12 @@ from .evacuation_strategy_selector import (
     HazardKnowledgeDecision, HazardKnowledgeState, HazardKnowledgeTracker,
     PathValidationConfig, ReplanningConfig, RouteFailureReason,
 )
+from .path_simplifier import (
+    PathSimplificationConfig, PathSimplificationResult, PathRiskConfig,
+    PathValidationSettings, SafePathSimplifier, SegmentRejectionReason,
+    SegmentSafetyResult, cells_touched_by_segment,
+    extract_direction_change_points,
+)
 
 __all__ = [
     "ReturnFailureReason", "ReturnPathPlan", "ReturnPathPlanner",
@@ -22,4 +28,8 @@ __all__ = [
     "HazardKnowledgeDecision", "HazardKnowledgeState",
     "HazardKnowledgeTracker", "PathValidationConfig", "ReplanningConfig",
     "RouteFailureReason",
+    "PathSimplificationConfig", "PathSimplificationResult", "PathRiskConfig",
+    "PathValidationSettings", "SafePathSimplifier",
+    "SegmentRejectionReason", "SegmentSafetyResult",
+    "cells_touched_by_segment", "extract_direction_change_points",
 ]

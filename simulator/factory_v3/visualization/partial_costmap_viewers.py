@@ -260,7 +260,7 @@ class PygameSimulationViewer:
 
     def _draw_status(self, snapshot):
         x = 760
-        y = 600
+        y = 565
         lines = [
             f"FDS time: {snapshot['fds_time']:.2f} s",
             f"Thermal min/max: {snapshot['thermal_min']:.1f} / {snapshot['thermal_max']:.1f} °C",
@@ -275,20 +275,21 @@ class PygameSimulationViewer:
             f"Hazard knowledge: {snapshot.get('hazard_knowledge', 'UNDECIDED')}",
             f"Strategy: {snapshot.get('evacuation_strategy', 'UNDECIDED')}",
             f"Route failure: {snapshot.get('route_failure', 'none')}",
+            f"Path O/C/F: {snapshot.get('path_simplification', 'N/A')}",
             f"Exit plan: {snapshot['exit_plan']}",
             "SPACE: pause/resume   ESC: quit",
         ]
         self.screen.blit(self.title_font.render("Simulation status", True, (245, 245, 245)), (x, y))
-        y += 34
+        y += 30
         for line in lines:
-            self.screen.blit(self.font.render(line, True, (225, 225, 225)), (x, y))
-            y += 27
+            self.screen.blit(self.small_font.render(line, True, (225, 225, 225)), (x, y))
+            y += 18
 
     def draw(
         self, belief, state, start, goal, follower, trajectory, camera,
         newly_observed_cells, snapshot, humans=(), exits=(), detected_ids=(),
         travel_history=(), return_path=(), blocked_return_grid=None,
-        exit_evaluations=(), selected_exit_id=None,
+        exit_evaluations=(), selected_exit_id=None, path_simplification=None,
     ) -> None:
         snapshot = dict(snapshot)
         snapshot["observed_ratio"] = float(belief.observed_mask.mean() * 100.0)
@@ -299,6 +300,38 @@ class PygameSimulationViewer:
             state, camera, newly_observed_cells, self.config.gas_update_radius
         )
         self._draw_paths(follower, trajectory)
+        if path_simplification is not None:
+            original = [
+                self.transform.world_to_screen(*self.grid_map.grid_to_world(*cell))
+                for cell in path_simplification.original_path_grid
+            ]
+            final = [
+                self.transform.world_to_screen(*point)
+                for point in path_simplification.waypoints_world
+            ]
+            if len(original) >= 2:
+                self.pygame.draw.lines(
+                    self.screen, (145, 150, 160), False, original, 2
+                )
+            if len(final) >= 2:
+                self.pygame.draw.lines(
+                    self.screen, (40, 220, 90), False, final, 5
+                )
+            for cell in path_simplification.corner_path_grid:
+                point = self.transform.world_to_screen(
+                    *self.grid_map.grid_to_world(*cell)
+                )
+                self.pygame.draw.circle(self.screen, (255, 220, 35), point, 5)
+            for point in final:
+                self.pygame.draw.circle(self.screen, (40, 245, 110), point, 6, 2)
+            for rejected in path_simplification.rejected_shortcuts[:12]:
+                a = self.transform.world_to_screen(
+                    *self.grid_map.grid_to_world(*rejected.start_grid)
+                )
+                b = self.transform.world_to_screen(
+                    *self.grid_map.grid_to_world(*rejected.end_grid)
+                )
+                self.pygame.draw.line(self.screen, (235, 55, 55), a, b, 1)
         self._draw_travel_and_return(
             travel_history, return_path, blocked_return_grid
         )

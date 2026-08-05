@@ -89,6 +89,35 @@ replanning:
   max_replan_attempts: 5
   cooldown_seconds: 0.5
 
+# The static planner map is already inflated by planner.inflation_radius_m.
+# Unknown cells remain traversable with PartialCostmap's explicit penalty;
+# exit evaluation independently enforces its stricter 0.5 route limit.
+path_simplification:
+  enabled: true
+  extract_direction_changes: true
+  enable_safe_shortcuts: true
+  line_traversal: supercover
+  preserve_start: true
+  preserve_goal: true
+  prevent_corner_cutting: true
+  use_inflated_costmap: true
+  fallback_to_original_path: true
+  robot_clearance_m: 0.0
+  risk:
+    compare_with_original_subpath: true
+    max_risk_increase_ratio: 1.05
+    max_unknown_ratio: 1.0
+    max_accumulated_cost: null
+    max_average_cost: null
+    max_cell_cost: null
+  validation:
+    reject_nan: true
+    reject_inf: true
+    reject_negative_cost: true
+    validate_temperature: true
+    validate_co: true
+    validate_dynamic_obstacles: true
+
 # Marker coordinates come from semantic_points.yaml. Approach points are
 # explicit free cells on the building-interior side of each solid marker.
 exits:

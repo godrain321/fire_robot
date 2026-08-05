@@ -30,11 +30,18 @@ class ReplannablePathFollower:
         self.waypoint_index = 0
         self.escape_nodes: set[tuple[int, int]] = set()
 
-    def set_path(self, grid_path, escape_path=(), goal_world=None) -> None:
+    def set_path(
+        self, grid_path, escape_path=(), goal_world=None, world_path=None,
+    ) -> None:
         self.grid_path = list(grid_path)
-        self.world_path = [
-            self.grid_map.grid_to_world(gx, gy) for gx, gy in self.grid_path
-        ]
+        if world_path is None:
+            self.world_path = [
+                self.grid_map.grid_to_world(gx, gy) for gx, gy in self.grid_path
+            ]
+        else:
+            self.world_path = [tuple(point) for point in world_path]
+            if len(self.world_path) != len(self.grid_path):
+                raise ValueError("world_path and grid_path must have equal length")
         if self.world_path and goal_world is not None:
             self.world_path[-1] = tuple(goal_world)
         # A one-node replan means the robot is in the goal grid cell but may

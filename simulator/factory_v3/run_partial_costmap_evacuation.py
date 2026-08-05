@@ -28,6 +28,9 @@ from navigation.evacuation_strategy_selector import (
     PathValidationConfig, ReplanningConfig,
 )
 from navigation.travel_history import TravelHistory, TravelHistoryConfig
+from navigation.path_simplifier import (
+    PathSimplificationConfig, SafePathSimplifier,
+)
 from planner.a_star import weighted_a_star_with_escape
 from planner.evacuation_planner import EvacuationPlanner, ExitSelectionConfig
 from planner.exit_evaluator import ExitEvaluationConfig, ExitEvaluator
@@ -82,7 +85,7 @@ def _combine_updates(*updates):
 def _viewer_snapshot(
     fds_time, thermal, co_text, metrics, last_replan_reason, status,
     mission_state, navigation_mode="NORMAL", evacuation_plan=None,
-    route_decision=None, route_failure=None,
+    route_decision=None, route_failure=None, path_simplification=None,
 ):
     """Create display-only scalar state without feeding it back to simulation."""
     path_cost = (
@@ -110,6 +113,18 @@ def _viewer_snapshot(
             else route_decision.strategy.name
         ),
         "route_failure": route_failure or "none",
+        "path_simplification": (
+            "N/A" if path_simplification is None else
+            f"{path_simplification.original_point_count}/"
+            f"{path_simplification.corner_point_count}/"
+            f"{path_simplification.simplified_point_count} points, "
+            f"{path_simplification.reduction_ratio * 100:.1f}% reduced, "
+            f"length {path_simplification.original_length_m:.2f}->"
+            f"{path_simplification.simplified_length_m:.2f} m, "
+            f"risk {path_simplification.original_risk_cost:.2f}->"
+            f"{path_simplification.simplified_risk_cost:.2f}, "
+            f"fallback={path_simplification.fallback_used}"
+        ),
         "exit_plan": (
             "N/A" if evacuation_plan is None or not evacuation_plan.success
             else (
@@ -200,6 +215,10 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         args.path_validation_config
     )
     replanning_config = ReplanningConfig.from_mapping(args.replanning_config)
+    path_simplifier = SafePathSimplifier(
+        world.map_metadata,
+        PathSimplificationConfig.from_mapping(args.path_simplification_config),
+    )
     world.attach_travel_history(travel_history)
     world.set_mission_entry(args.mission_entry_id, args.start)
     world.record_robot_position(args.start, sim_time=0.0)
@@ -255,6 +274,89 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     latest_newly_observed_cells: set[tuple[int, int]] = set()
     last_replan_reason = "none"
     last_route_environment_revision = world.environment_revision
+
+    def activate_simplified_path(
+        original_path_grid, *, goal_world, escape_path=(),
+    ):
+        """Validate, simplify, store, then atomically activate waypoints."""
+        path = tuple((int(col), int(row)) for col, row in original_path_grid)
+        current_grid = grid_map.world_to_grid(state.x, state.y)
+        if path and path[0] != current_grid:
+            path = (current_grid,) + path
+        result = path_simplifier.simplify(
+            path, costmap=belief.final_cost_map,
+            static_obstacle_map=belief.static_obstacle_map,
+            dynamic_obstacle_map=world.dynamic_obstacle_mask(),
+            estimated_fire_map=world.estimated_fire_map,
+            costmap_revision=belief.revision,
+            start_world=(state.x, state.y), goal_world=goal_world,
+        )
+        if not result.success:
+            follower.clear()
+            world.final_route_failure_reason = result.failure_reason
+            return None
+        world.record_path_simplification(result)
+        simplified_escape = tuple(
+            node for node in result.simplified_path_grid if node in set(escape_path)
+        )
+        follower.set_path(
+            result.simplified_path_grid, simplified_escape,
+            goal_world=goal_world, world_path=result.waypoints_world,
+        )
+        return result
+
+    def activate_replacement_route(replacement) -> bool:
+        """Activate a Stage-6 replacement only after Stage-7 validation."""
+        nonlocal goal, no_path_active, returning_to_entrance
+        nonlocal selected_exit, status
+        goal = replacement.target_position_world
+        simplified = activate_simplified_path(
+            replacement.path_grid, goal_world=goal
+        )
+        if simplified is None:
+            mission.handle_event(
+                MissionEvent.NO_SAFE_ROUTE_FOUND,
+                sim_time=sim_elapsed,
+                reason=world.final_route_failure_reason,
+            )
+            status = "NO_SAFE_ROUTE: path simplification failed"
+            no_path_active = True
+            return False
+        world.set_active_route_decision(replacement)
+        no_path_active = False
+        if replacement.strategy is EvacuationStrategy.REPLAN_TO_ENTRANCE:
+            mission.handle_event(
+                MissionEvent.ENTRANCE_ROUTE_CREATED,
+                path=simplified.simplified_path_grid,
+                sim_time=sim_elapsed,
+            )
+            returning_to_entrance = True
+            selected_exit = None
+            status = "RETURNING_TO_ENTRANCE_BY_ASTAR"
+        else:
+            mission.handle_event(
+                MissionEvent.EXIT_EVALUATION_REQUESTED,
+                sim_time=sim_elapsed,
+            )
+            mission.handle_event(
+                MissionEvent.SAFE_EXIT_SELECTED,
+                exit_id=replacement.target_exit_id,
+                exit_position=goal,
+                selection_reason=replacement.reasons[0],
+                sim_time=sim_elapsed,
+            )
+            mission.handle_event(
+                MissionEvent.EVACUATION_PLAN_CREATED,
+                exit_id=replacement.target_exit_id,
+                exit_position=goal,
+                path=simplified.simplified_path_grid,
+                sim_time=sim_elapsed,
+            )
+            selected_exit = replacement.target_exit_id
+            metrics.selected_exit = selected_exit
+            returning_to_entrance = False
+            status = f"EVACUATING VIA {selected_exit}"
+        return True
     pygame_viewer = None
     thermal_viewer = None
     if not args.headless:
@@ -318,32 +420,61 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                 and return_planner.config.validate_during_return
                 and world.active_return_plan is not None
             ):
-                rechecked = return_planner.validate_plan(
-                    world.active_return_plan,
-                    cost_map=belief.final_cost_map,
-                    static_obstacle_map=belief.static_obstacle_map,
-                    dynamic_obstacle_map=world.dynamic_obstacle_mask(),
-                    estimated_fire_map=world.estimated_fire_map,
-                    current_time=sim_elapsed,
-                    start_index=max(0, follower.waypoint_index - 1),
-                    current_position_world=(state.x, state.y),
-                )
-                if not rechecked.success:
+                rechecked = None
+                simplified_recheck = None
+                if world.active_path_simplification is not None:
+                    remaining_simplified = (
+                        world.active_path_simplification.simplified_path_grid[
+                            max(0, follower.waypoint_index - 1):
+                        ]
+                    )
+                    if remaining_simplified:
+                        simplified_recheck = path_simplifier.validate_path(
+                            remaining_simplified,
+                            costmap=belief.final_cost_map,
+                            static_obstacle_map=belief.static_obstacle_map,
+                            dynamic_obstacle_map=world.dynamic_obstacle_mask(),
+                            estimated_fire_map=world.estimated_fire_map,
+                        )
+                else:
+                    rechecked = return_planner.validate_plan(
+                        world.active_return_plan,
+                        cost_map=belief.final_cost_map,
+                        static_obstacle_map=belief.static_obstacle_map,
+                        dynamic_obstacle_map=world.dynamic_obstacle_mask(),
+                        estimated_fire_map=world.estimated_fire_map,
+                        current_time=sim_elapsed,
+                        start_index=max(0, follower.waypoint_index - 1),
+                        current_position_world=(state.x, state.y),
+                    )
+                if (rechecked is not None and not rechecked.success) or (
+                    simplified_recheck is not None and not simplified_recheck.safe
+                ):
+                    invalid_reason = (
+                        rechecked.failure_reason.value
+                        if rechecked is not None and not rechecked.success else
+                        simplified_recheck.rejection_reasons[0].value
+                    )
+                    invalid_grid = (
+                        rechecked.blocked_grid
+                        if rechecked is not None and not rechecked.success
+                        else simplified_recheck.first_rejected_cell
+                    )
                     # Safety order is intentional: stop and deactivate first,
                     # then evaluate a replacement route from the current pose.
                     mission.handle_event(
                         MissionEvent.RETURN_PATH_INVALIDATED,
                         sim_time=sim_elapsed,
-                        reason=rechecked.failure_reason.value,
+                        reason=invalid_reason,
                     )
                     follower.clear()
                     world.clear_active_return_plan()
                     world.invalidate_active_route(
-                        rechecked.failure_reason.value, rechecked.blocked_grid
+                        invalid_reason, invalid_grid
                     )
                     returning_by_history = False
-                    blocked_return_grid = rechecked.blocked_grid
-                    status = f"RETURN_BLOCKED: {rechecked.failure_reason.value}"
+                    blocked_return_grid = invalid_grid
+                    status = f"RETURN_BLOCKED: {invalid_reason}"
                     no_path_active = True
                     if (
                         replanning_config.enabled
@@ -353,7 +484,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                         mission.handle_event(
                             MissionEvent.REPLAN_REQUESTED,
                             sim_time=sim_elapsed,
-                            reason=rechecked.failure_reason.value,
+                            reason=invalid_reason,
                         )
                         world.route_replan_count += 1
                         replacement = strategy_selector.replan_after_return_invalidated(
@@ -365,43 +496,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                         )
                         world.hazard_knowledge_decision = replacement.hazard_knowledge
                         if replacement.success:
-                            world.set_active_route_decision(replacement)
-                            goal = replacement.target_position_world
-                            follower.set_path(
-                                replacement.path_grid, goal_world=goal
-                            )
-                            no_path_active = False
-                            if replacement.strategy is EvacuationStrategy.REPLAN_TO_ENTRANCE:
-                                mission.handle_event(
-                                    MissionEvent.ENTRANCE_ROUTE_CREATED,
-                                    path=replacement.path_grid,
-                                    sim_time=sim_elapsed,
-                                )
-                                returning_to_entrance = True
-                                selected_exit = None
-                                status = "RETURNING_TO_ENTRANCE_BY_ASTAR"
-                            else:
-                                mission.handle_event(
-                                    MissionEvent.EXIT_EVALUATION_REQUESTED,
-                                    sim_time=sim_elapsed,
-                                )
-                                mission.handle_event(
-                                    MissionEvent.SAFE_EXIT_SELECTED,
-                                    exit_id=replacement.target_exit_id,
-                                    exit_position=goal,
-                                    selection_reason=replacement.reasons[0],
-                                    sim_time=sim_elapsed,
-                                )
-                                mission.handle_event(
-                                    MissionEvent.EVACUATION_PLAN_CREATED,
-                                    exit_id=replacement.target_exit_id,
-                                    exit_position=goal,
-                                    path=replacement.path_grid,
-                                    sim_time=sim_elapsed,
-                                )
-                                selected_exit = replacement.target_exit_id
-                                returning_to_entrance = False
-                                status = f"EVACUATING VIA {selected_exit}"
+                            activate_replacement_route(replacement)
                         else:
                             mission.handle_event(
                                 MissionEvent.NO_SAFE_ROUTE_FOUND,
@@ -424,10 +519,25 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     and last_route_environment_revision != world.environment_revision
                 )
             ):
-                valid, blocked_grid, invalid_reason = strategy_selector.validate_grid_path(
-                    world.active_route_decision.path_grid,
-                    start_index=max(0, follower.waypoint_index - 1),
-                    cost_map=belief.final_cost_map, world_state=world,
+                active_grid_path = (
+                    world.active_path_simplification.simplified_path_grid
+                    if world.active_path_simplification is not None
+                    else world.active_route_decision.path_grid
+                )
+                remaining_active_path = active_grid_path[
+                    max(0, follower.waypoint_index - 1):
+                ]
+                route_validation = path_simplifier.validate_path(
+                    remaining_active_path,
+                    costmap=belief.final_cost_map,
+                    static_obstacle_map=belief.static_obstacle_map,
+                    dynamic_obstacle_map=world.dynamic_obstacle_mask(),
+                    estimated_fire_map=world.estimated_fire_map,
+                )
+                valid = route_validation.safe
+                blocked_grid = route_validation.first_rejected_cell
+                invalid_reason = (
+                    None if valid else route_validation.rejection_reasons[0].value
                 )
                 world.record_route_validation(
                     sim_time=sim_elapsed, costmap_revision=belief.revision
@@ -473,41 +583,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                                 created_at=sim_elapsed,
                             )
                         if replacement.success:
-                            world.set_active_route_decision(replacement)
-                            goal = replacement.target_position_world
-                            follower.set_path(replacement.path_grid, goal_world=goal)
-                            no_path_active = False
-                            if replacement.strategy is EvacuationStrategy.REPLAN_TO_ENTRANCE:
-                                mission.handle_event(
-                                    MissionEvent.ENTRANCE_ROUTE_CREATED,
-                                    path=replacement.path_grid,
-                                    sim_time=sim_elapsed,
-                                )
-                                returning_to_entrance = True
-                                selected_exit = None
-                                status = "RETURNING_TO_ENTRANCE_BY_ASTAR"
-                            else:
-                                mission.handle_event(
-                                    MissionEvent.EXIT_EVALUATION_REQUESTED,
-                                    sim_time=sim_elapsed,
-                                )
-                                mission.handle_event(
-                                    MissionEvent.SAFE_EXIT_SELECTED,
-                                    exit_id=replacement.target_exit_id,
-                                    exit_position=goal,
-                                    sim_time=sim_elapsed,
-                                )
-                                mission.handle_event(
-                                    MissionEvent.EVACUATION_PLAN_CREATED,
-                                    exit_id=replacement.target_exit_id,
-                                    exit_position=goal,
-                                    path=replacement.path_grid,
-                                    sim_time=sim_elapsed,
-                                )
-                                selected_exit = replacement.target_exit_id
-                                metrics.selected_exit = selected_exit
-                                returning_to_entrance = False
-                                status = f"EVACUATING VIA {selected_exit}"
+                            activate_replacement_route(replacement)
                         else:
                             mission.handle_event(
                                 MissionEvent.NO_SAFE_ROUTE_FOUND,
@@ -516,6 +592,43 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                             )
                             world.final_route_failure_reason = replacement.failure_reason.value
                             status = f"NO_SAFE_ROUTE: {replacement.failure_reason.value}"
+            if (
+                not returning_by_history
+                and world.active_route_decision is None
+                and world.active_path_simplification is not None
+                and (
+                    world.active_path_simplification.used_costmap_revision
+                    != belief.revision
+                    or last_route_environment_revision
+                    != world.environment_revision
+                )
+            ):
+                # Search/approach paths do not yet have a Mission route object,
+                # but their non-adjacent shortcut segments still require the
+                # same supercover revalidation after sensor updates.
+                remaining_search_path = (
+                    world.active_path_simplification.simplified_path_grid[
+                        max(0, follower.waypoint_index - 1):
+                    ]
+                )
+                if remaining_search_path:
+                    search_validation = path_simplifier.validate_path(
+                        remaining_search_path,
+                        costmap=belief.final_cost_map,
+                        static_obstacle_map=belief.static_obstacle_map,
+                        dynamic_obstacle_map=world.dynamic_obstacle_mask(),
+                        estimated_fire_map=world.estimated_fire_map,
+                    )
+                    last_route_environment_revision = world.environment_revision
+                    if not search_validation.safe:
+                        follower.clear()
+                        blocked_return_grid = search_validation.first_rejected_cell
+                        status = (
+                            "SEARCH_PATH_INVALIDATED: "
+                            + search_validation.rejection_reasons[0].value
+                        )
+                        no_path_active = True
+                        world.clear_path_simplification()
             gt_temperature, gt_co, gt_time = ground_truth.sample_map_yx(
                 map_x, map_y, config.robot_height, fds_time
             )
@@ -615,7 +728,6 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     MissionEvent.NO_HAZARD_INFORMATION, sim_time=sim_elapsed,
                 )
             if route_decision.success:
-                world.set_active_route_decision(route_decision)
                 if route_decision.strategy is EvacuationStrategy.SAFE_EXIT_PLANNING:
                     evacuation_plan = route_decision.evacuation_plan
                     selected = evacuation_plan.selected_evaluation
@@ -637,43 +749,66 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                         if selected.exit_co_ppm is not None else np.nan,
                         path_cost=selected.accumulated_risk_cost,
                     )
-                    world.update_victim_status(
-                        victim.victim_id, VictimStatus.EVACUATING,
-                        sim_time=sim_elapsed, assigned_exit_id=selected_exit,
-                    )
-                    mission.handle_event(
-                        MissionEvent.EVACUATION_PLAN_CREATED,
-                        exit_id=selected_exit,
-                        exit_position=goal,
-                        path=evacuation_plan.path_grid,
-                        selection_reason=evacuation_plan.selection_reason,
-                        sim_time=sim_elapsed,
-                    )
-                    follower.set_path(
+                    simplified = activate_simplified_path(
                         evacuation_plan.path_grid, goal_world=goal
                     )
-                    last_replan_time = sim_elapsed
-                    last_replan_position = (state.x, state.y)
-                    status = f"EVACUATING VIA {selected_exit}"
-                    no_path_active = False
+                    if simplified is None:
+                        mission.handle_event(
+                            MissionEvent.PATH_PLANNING_FAILED,
+                            sim_time=sim_elapsed,
+                            reason=world.final_route_failure_reason,
+                        )
+                        status = "NO_PATH: simplification rejected original path"
+                        no_path_active = True
+                    else:
+                        world.set_active_route_decision(route_decision)
+                        world.update_victim_status(
+                            victim.victim_id, VictimStatus.EVACUATING,
+                            sim_time=sim_elapsed, assigned_exit_id=selected_exit,
+                        )
+                        mission.handle_event(
+                            MissionEvent.EVACUATION_PLAN_CREATED,
+                            exit_id=selected_exit,
+                            exit_position=goal,
+                            path=simplified.simplified_path_grid,
+                            selection_reason=evacuation_plan.selection_reason,
+                            sim_time=sim_elapsed,
+                        )
+                        last_replan_time = sim_elapsed
+                        last_replan_position = (state.x, state.y)
+                        status = f"EVACUATING VIA {selected_exit}"
+                        no_path_active = False
                 else:
                     return_plan = route_decision.return_plan
-                    mission.handle_event(
-                        MissionEvent.RETURN_PATH_CREATED,
-                        path=route_decision.path_grid, sim_time=sim_elapsed,
-                    )
-                    world.set_active_return_plan(return_plan)
-                    world.update_victim_status(
-                        victim.victim_id, VictimStatus.EVACUATING,
-                        sim_time=sim_elapsed,
-                    )
                     selected_exit = None
                     goal = route_decision.target_position_world
-                    follower.set_path(route_decision.path_grid, goal_world=goal)
-                    returning_by_history = True
-                    returning_to_entrance = False
-                    status = "RETURNING_BY_HISTORY"
-                    no_path_active = False
+                    simplified = activate_simplified_path(
+                        route_decision.path_grid, goal_world=goal
+                    )
+                    if simplified is None:
+                        mission.handle_event(
+                            MissionEvent.NO_SAFE_ROUTE_FOUND,
+                            sim_time=sim_elapsed,
+                            reason=world.final_route_failure_reason,
+                        )
+                        status = "NO_SAFE_ROUTE: history path simplification failed"
+                        no_path_active = True
+                    else:
+                        world.set_active_route_decision(route_decision)
+                        mission.handle_event(
+                            MissionEvent.RETURN_PATH_CREATED,
+                            path=simplified.simplified_path_grid,
+                            sim_time=sim_elapsed,
+                        )
+                        world.set_active_return_plan(return_plan)
+                        world.update_victim_status(
+                            victim.victim_id, VictimStatus.EVACUATING,
+                            sim_time=sim_elapsed,
+                        )
+                        returning_by_history = True
+                        returning_to_entrance = False
+                        status = "RETURNING_BY_HISTORY"
+                        no_path_active = False
             else:
                 selected_exit = None
                 follower.clear()
@@ -736,21 +871,35 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             last_replan_time = sim_elapsed
             last_replan_position = (state.x, state.y)
             if result.path:
-                follower.set_path(result.path, result.escape_path, goal_world=goal)
-                if mission.current_state is MissionState.PLAN_EVACUATION:
+                simplified = activate_simplified_path(
+                    result.path, escape_path=result.escape_path,
+                    goal_world=goal,
+                )
+                if simplified is not None and mission.current_state is MissionState.PLAN_EVACUATION:
                     exit_position = goal if selected_exit is not None else None
                     mission.handle_event(
                         MissionEvent.PATH_PLANNED,
                         exit_id=selected_exit,
                         exit_position=exit_position,
-                        path=result.path,
+                        path=simplified.simplified_path_grid,
                         sim_time=sim_elapsed,
                     )
-                metrics.final_path_cost = result.total_cost
-                if metrics.first_path_cost is None:
-                    metrics.first_path_cost = result.total_cost
-                status = f"EVACUATING ({replan_reason})"
-                no_path_active = False
+                if simplified is not None:
+                    metrics.final_path_cost = result.total_cost
+                    if metrics.first_path_cost is None:
+                        metrics.first_path_cost = result.total_cost
+                    status = f"EVACUATING ({replan_reason})"
+                    no_path_active = False
+                else:
+                    if mission.current_state is MissionState.PLAN_EVACUATION:
+                        mission.handle_event(
+                            MissionEvent.PATH_PLANNING_FAILED,
+                            sim_time=sim_elapsed,
+                            reason=world.final_route_failure_reason,
+                        )
+                    metrics.no_path_count += 1
+                    status = "NO_PATH: unsafe A* result"
+                    no_path_active = True
             else:
                 follower.clear()
                 if mission.current_state is MissionState.PLAN_EVACUATION:
@@ -845,6 +994,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                         world.active_evacuation_plan,
                         world.active_route_decision,
                         world.final_route_failure_reason,
+                        world.active_path_simplification,
                     ),
                     args.humans, args.exits, detected_ids,
                     travel_history.get_points_world(),
@@ -852,6 +1002,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     blocked_return_grid,
                     tuple(world.latest_exit_evaluations.values()),
                     selected_exit,
+                    world.active_path_simplification,
                 )
                 pygame_viewer.close()
             if thermal_viewer is not None:
@@ -875,6 +1026,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     world.active_evacuation_plan,
                     world.active_route_decision,
                     world.final_route_failure_reason,
+                    world.active_path_simplification,
                 ),
                 args.humans, args.exits, detected_ids,
                 travel_history.get_points_world(),
@@ -882,6 +1034,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                 blocked_return_grid,
                 tuple(world.latest_exit_evaluations.values()),
                 selected_exit,
+                world.active_path_simplification,
             )
         sim_elapsed += config.simulation_dt
 
@@ -1008,6 +1161,7 @@ def apply_scenario_config(args):
     )
     args.path_validation_config = scenario.get("path_validation", {})
     args.replanning_config = scenario.get("replanning", {})
+    args.path_simplification_config = scenario.get("path_simplification", {})
     args.mission_entry_id = str(scenario.get("mission_entry_id", "MISSION_ENTRY"))
     return args
 

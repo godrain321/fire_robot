@@ -102,6 +102,8 @@ class WorldState:
         self.environment_revision = 0
         self.route_replan_count = 0
         self.final_route_failure_reason: str | None = None
+        self.active_path_simplification = None
+        self.path_simplification_history: list[Any] = []
 
     @classmethod
     def from_scenario(cls, scenario: dict[str, Any], grid_map, config) -> "WorldState":
@@ -192,6 +194,16 @@ class WorldState:
     def clear_active_route(self) -> None:
         self.active_route_decision = None
         self.active_route_valid = False
+        self.active_path_simplification = None
+
+    def record_path_simplification(self, result) -> None:
+        if not result.success:
+            raise ValueError("cannot activate a failed path simplification")
+        self.active_path_simplification = result
+        self.path_simplification_history.append(result)
+
+    def clear_path_simplification(self) -> None:
+        self.active_path_simplification = None
 
     def record_route_validation(self, *, sim_time: float, costmap_revision: int) -> None:
         self.active_route_last_validated_at = float(sim_time)
@@ -434,6 +446,8 @@ class WorldState:
             "environment_revision": self.environment_revision,
             "route_replan_count": self.route_replan_count,
             "final_route_failure_reason": self.final_route_failure_reason,
+            "active_path_simplification": self.active_path_simplification,
+            "path_simplification_history": self.path_simplification_history,
             "static_obstacle_map": self.static_obstacle_map,
             "dynamic_obstacles": self.dynamic_obstacles,
             "exits": self.exits,
