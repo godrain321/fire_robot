@@ -24,6 +24,8 @@ from mission.mission_manager import MissionEvent, MissionManager, MissionState
 from navigation.return_path_planner import ReturnPathConfig, ReturnPathPlanner
 from navigation.travel_history import TravelHistory, TravelHistoryConfig
 from planner.a_star import weighted_a_star_with_escape
+from planner.evacuation_planner import EvacuationPlanner, ExitSelectionConfig
+from planner.exit_evaluator import ExitEvaluationConfig, ExitEvaluator
 from robot.path_follower import RobotState, ReplannablePathFollower
 from sensors.mq135_sensor import MQ135Config, MQ135Sensor
 from sensors.thermal_camera import ThermalCameraMLX90640
@@ -55,10 +57,6 @@ class SimulationMetrics:
     selected_exit: str | None = None
 
 
-class _HistoryReturnPreferred(RuntimeError):
-    """Internal control signal for an explicitly configured fallback policy."""
-
-
 def _finite_stats(values: list[float]) -> tuple[str, str]:
     finite = np.asarray(values, dtype=float)
     finite = finite[np.isfinite(finite)]
@@ -78,7 +76,7 @@ def _combine_updates(*updates):
 
 def _viewer_snapshot(
     fds_time, thermal, co_text, metrics, last_replan_reason, status,
-    mission_state, navigation_mode="NORMAL",
+    mission_state, navigation_mode="NORMAL", evacuation_plan=None,
 ):
     """Create display-only scalar state without feeding it back to simulation."""
     path_cost = (
@@ -97,6 +95,14 @@ def _viewer_snapshot(
         "status": status,
         "mission_state": mission_state.name,
         "navigation_mode": navigation_mode,
+        "exit_plan": (
+            "N/A" if evacuation_plan is None or not evacuation_plan.success
+            else (
+                f"{evacuation_plan.selected_exit_id}: "
+                f"{evacuation_plan.selected_evaluation.path_length_m:.2f} m, "
+                f"risk {evacuation_plan.selected_evaluation.accumulated_risk_cost:.3f}"
+            )
+        ),
     }
 
 
@@ -110,25 +116,6 @@ def _validate_free_point(name, point, grid_map) -> None:
         raise ValueError(f"{name} is outside the planner map: world={point}, grid={node}")
     if grid_map.is_blocked(node):
         raise ValueError(f"{name} is inside an inflated static obstacle: world={point}, grid={node}")
-
-
-def _select_safest_exit(state, exits, belief):
-    """Choose the currently reachable exit approach with the lowest A* cost."""
-    start = belief.grid_map.world_to_grid(state.x, state.y)
-    candidates = []
-    for exit_item in exits:
-        goal_world = _point(exit_item["approach"])
-        result = weighted_a_star_with_escape(
-            belief.final_cost_map,
-            start,
-            belief.grid_map.world_to_grid(*goal_world),
-            belief.static_obstacle_map,
-        )
-        if result.path:
-            candidates.append((result.total_cost, exit_item["id"], goal_world))
-    if not candidates:
-        raise RuntimeError("no configured exit is reachable in the current partial costmap")
-    return min(candidates, key=lambda item: (item[0], item[1]))
 
 
 def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, float]:
@@ -173,6 +160,17 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     return_planner = ReturnPathPlanner(
         world.map_metadata, ReturnPathConfig.from_mapping(args.return_path_config)
     )
+    exit_evaluator = ExitEvaluator(
+        world.map_metadata,
+        ExitEvaluationConfig.from_mapping(args.exit_evaluation_config),
+        temperature_blocked_c=config.temperature_blocked,
+        co_blocked_ppm=config.co_blocked,
+        base_cost=config.base_cost,
+    )
+    evacuation_planner = EvacuationPlanner(
+        exit_evaluator,
+        ExitSelectionConfig.from_mapping(args.exit_selection_config),
+    )
     world.attach_travel_history(travel_history)
     world.record_robot_position(args.start, sim_time=0.0)
     map_x = np.asarray([
@@ -187,10 +185,13 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         _validate_free_point(name, point, grid_map)
     for human in args.humans:
         _validate_free_point(f"human {human['id']}", _point(human), grid_map)
-    for exit_item in args.exits:
-        _validate_free_point(
-            f"exit approach {exit_item['id']}", _point(exit_item["approach"]), grid_map
-        )
+    for exit_item in world.exits.values():
+        if exit_item.approach_position_world is not None:
+            _validate_free_point(
+                f"exit approach {exit_item.exit_id}",
+                exit_item.approach_position_world,
+                grid_map,
+            )
 
     state = RobotState(args.start[0], args.start[1], math.radians(args.start_theta))
     goal = tuple(args.search_waypoint)
@@ -431,68 +432,102 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             world.update_victim_status(
                 victim.victim_id, VictimStatus.MOVABLE, sim_time=sim_elapsed
             )
-            try:
-                if (
-                    return_planner.config.enabled
-                    and return_planner.config.allow_history_fallback
-                    and not return_planner.config.prefer_normal_planner
-                    and not world.estimated_fire_map.blocked_mask.any()
-                ):
-                    raise _HistoryReturnPreferred(
+            mission.handle_event(
+                MissionEvent.EXIT_EVALUATION_REQUESTED,
+                victim_id=victim.victim_id,
+                sim_time=sim_elapsed,
+            )
+            evaluation_cost_map = belief.final_cost_map.copy()
+            dynamic_mask = world.dynamic_obstacle_mask()
+            evaluation_cost_map[dynamic_mask] = np.inf
+            evacuation_plan = evacuation_planner.plan(
+                world.exits.values(), victim.position_world,
+                cost_map=evaluation_cost_map,
+                static_obstacle_map=belief.static_obstacle_map,
+                dynamic_obstacle_map=dynamic_mask,
+                estimated_fire_map=world.estimated_fire_map,
+                created_at=sim_elapsed,
+            )
+            world.record_exit_evaluations(evacuation_plan)
+            history_preferred = (
+                evacuation_plan.success
+                and return_planner.config.enabled
+                and return_planner.config.allow_history_fallback
+                and not return_planner.config.prefer_normal_planner
+                and not world.estimated_fire_map.blocked_mask.any()
+            )
+            if evacuation_plan.success:
+                selected = evacuation_plan.selected_evaluation
+                mission.handle_event(
+                    MissionEvent.SAFE_EXIT_SELECTED,
+                    exit_id=evacuation_plan.selected_exit_id,
+                    exit_position=evacuation_plan.selected_approach_position_world,
+                    selection_reason=evacuation_plan.selection_reason,
+                    sim_time=sim_elapsed,
+                )
+                if history_preferred:
+                    selected_exit = None
+                    follower.clear()
+                    world.clear_active_evacuation_plan()
+                    request_history_return(
                         "configured policy prefers recorded entry route when no fire risk is known"
                     )
-                exit_cost, exit_id, exit_goal = _select_safest_exit(
-                    state, args.exits, belief
-                )
-            except _HistoryReturnPreferred as exc:
-                selected_exit = None
-                follower.clear()
-                request_history_return(str(exc))
-            except RuntimeError as exc:
-                for exit_item in world.exits.values():
+                else:
+                    selected_exit = evacuation_plan.selected_exit_id
+                    metrics.selected_exit = selected_exit
+                    goal = evacuation_plan.selected_approach_position_world
                     world.update_exit_status(
-                        exit_item.exit_id, ExitStatus.BLOCKED,
+                        selected_exit, ExitStatus.USABLE,
                         sim_time=sim_elapsed,
-                        reason="no path in current partial costmap",
+                        temperature_c=selected.exit_temperature_c
+                        if selected.exit_temperature_c is not None else np.nan,
+                        co_ppm=selected.exit_co_ppm
+                        if selected.exit_co_ppm is not None else np.nan,
+                        path_cost=selected.accumulated_risk_cost,
                     )
-                mission.handle_event(
-                    MissionEvent.PATH_PLANNING_FAILED,
-                    sim_time=sim_elapsed,
-                    reason=str(exc),
-                    failed_exits={item["id"]: "unreachable" for item in args.exits},
-                )
-                # No candidate exit exists, so a second failed retry closes the
-                # state-machine attempt without changing the legacy planner.
-                mission.handle_event(
-                    MissionEvent.PATH_PLANNING_FAILED,
-                    sim_time=sim_elapsed,
-                    reason="all configured exits are unreachable",
-                )
+                    world.update_victim_status(
+                        victim.victim_id, VictimStatus.EVACUATING,
+                        sim_time=sim_elapsed, assigned_exit_id=selected_exit,
+                    )
+                    mission.handle_event(
+                        MissionEvent.EVACUATION_PLAN_CREATED,
+                        exit_id=selected_exit,
+                        exit_position=goal,
+                        path=evacuation_plan.path_grid,
+                        selection_reason=evacuation_plan.selection_reason,
+                        sim_time=sim_elapsed,
+                    )
+                    follower.set_path(
+                        evacuation_plan.path_grid, goal_world=goal
+                    )
+                    last_replan_time = sim_elapsed
+                    last_replan_position = (state.x, state.y)
+                    status = f"EVACUATING VIA {selected_exit}"
+                    no_path_active = False
+            else:
                 selected_exit = None
                 follower.clear()
-                status = f"NO_PATH: {exc}"
+                failed_exits = {
+                    item.exit_id: ",".join(
+                        reason.value for reason in item.rejection_reasons
+                    ) or "rejected"
+                    for item in evacuation_plan.all_evaluations
+                }
+                mission.handle_event(
+                    MissionEvent.NO_SAFE_EXIT_FOUND,
+                    sim_time=sim_elapsed,
+                    reason=evacuation_plan.failure_reason.value,
+                    failed_exits=failed_exits,
+                )
+                status = f"NO_SAFE_EXIT: {evacuation_plan.failure_reason.value}"
                 no_path_active = True
                 if (
                     return_planner.config.enabled
                     and return_planner.config.allow_history_fallback
                 ):
                     request_history_return(
-                        "normal exit planning failed; evaluating recorded entry path"
+                        "all evaluated exits were rejected; evaluating recorded entry path"
                     )
-            else:
-                selected_exit = exit_id
-                metrics.selected_exit = exit_id
-                goal = exit_goal
-                world.update_exit_status(
-                    exit_id, ExitStatus.USABLE, sim_time=sim_elapsed,
-                    path_cost=exit_cost,
-                )
-                world.update_victim_status(
-                    victim.victim_id, VictimStatus.EVACUATING,
-                    sim_time=sim_elapsed, assigned_exit_id=exit_id,
-                )
-                follower.clear()
-                status = f"PLANNING EVACUATION VIA {exit_id}"
 
         remaining_path = follower.remaining_grid_path()
         replan_reason = None
@@ -628,6 +663,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     sim_time=sim_elapsed,
                     remaining_victims=remaining_victims,
                 )
+                world.clear_active_evacuation_plan()
             status = "EVACUATION_SUCCESS"
             if pygame_viewer is not None:
                 pygame_viewer.draw(
@@ -637,11 +673,14 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                         fds_time, latest_thermal, latest_co_text, metrics,
                         last_replan_reason, status, mission.current_state,
                         "HISTORY_RETURN" if returning_by_history else "NORMAL",
+                        world.active_evacuation_plan,
                     ),
                     args.humans, args.exits, detected_ids,
                     travel_history.get_points_world(),
                     () if world.active_return_plan is None else world.active_return_plan.path_world[max(0, follower.waypoint_index - 1):],
                     blocked_return_grid,
+                    tuple(world.latest_exit_evaluations.values()),
+                    selected_exit,
                 )
                 pygame_viewer.close()
             if thermal_viewer is not None:
@@ -658,11 +697,14 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     status if no_path_active else motion_status,
                     mission.current_state,
                     "HISTORY_RETURN" if returning_by_history else "NORMAL",
+                    world.active_evacuation_plan,
                 ),
                 args.humans, args.exits, detected_ids,
                 travel_history.get_points_world(),
                 () if world.active_return_plan is None else world.active_return_plan.path_world[max(0, follower.waypoint_index - 1):],
                 blocked_return_grid,
+                tuple(world.latest_exit_evaluations.values()),
+                selected_exit,
             )
         sim_elapsed += config.simulation_dt
 
@@ -782,6 +824,8 @@ def apply_scenario_config(args):
     args.max_mission_replans = int(mission_config.get("max_replan_count", 5))
     args.travel_history_config = scenario.get("travel_history", {})
     args.return_path_config = scenario.get("return_path", {})
+    args.exit_evaluation_config = scenario.get("exit_evaluation", {})
+    args.exit_selection_config = scenario.get("exit_selection", {})
     return args
 
 

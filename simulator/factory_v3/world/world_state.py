@@ -84,6 +84,9 @@ class WorldState:
         self.robot_position_world: tuple[float, float] | None = None
         self.travel_history = None
         self.active_return_plan = None
+        self.latest_exit_evaluations: dict[str, Any] = {}
+        self.exit_evaluation_history: list[tuple[Any, ...]] = []
+        self.active_evacuation_plan = None
 
     @classmethod
     def from_scenario(cls, scenario: dict[str, Any], grid_map, config) -> "WorldState":
@@ -98,12 +101,13 @@ class WorldState:
         for item in scenario.get("exits", []):
             marker = item.get("marker")
             approach = item.get("approach")
-            if marker is None or approach is None:
-                raise ValueError(f"exit {item.get('id')!r} requires marker and approach")
+            if marker is None:
+                raise ValueError(f"exit {item.get('id')!r} requires marker")
             world.add_exit(Exit(
                 exit_id=str(item["id"]),
                 position_world=(marker["x"], marker["y"]),
-                approach_position_world=(approach["x"], approach["y"]),
+                approach_position_world=(approach["x"], approach["y"])
+                if approach is not None else None,
                 status=_enum(ExitStatus, item.get("initial_status", "unknown"), "exit status"),
             ))
         for item in scenario.get("humans", []):
@@ -165,6 +169,26 @@ class WorldState:
     def clear_active_return_plan(self) -> None:
         self.active_return_plan = None
 
+    def record_exit_evaluations(self, evacuation_plan) -> None:
+        evaluations = tuple(evacuation_plan.all_evaluations)
+        self.latest_exit_evaluations = {
+            item.exit_id: item for item in evaluations
+        }
+        for evaluation in evaluations:
+            exit_item = self.get_exit(evaluation.exit_id)
+            exit_item.last_checked_at = evaluation.evaluated_at
+            exit_item.temperature_c = evaluation.exit_temperature_c
+            exit_item.co_ppm = evaluation.exit_co_ppm
+            exit_item.path_cost = evaluation.accumulated_risk_cost
+            exit_item.metadata["last_evaluation"] = evaluation.to_dict()
+        self.exit_evaluation_history.append(evaluations)
+        self.active_evacuation_plan = (
+            evacuation_plan if evacuation_plan.success else None
+        )
+
+    def clear_active_evacuation_plan(self) -> None:
+        self.active_evacuation_plan = None
+
     def validate_position(self, position_world, *, require_free: bool = True, label: str = "position") -> tuple[int, int]:
         x, y = float(position_world[0]), float(position_world[1])
         col, row = self.map_metadata.world_to_grid(x, y)
@@ -176,7 +200,8 @@ class WorldState:
         if exit_item.exit_id in self.exits:
             raise ValueError(f"duplicate exit_id: {exit_item.exit_id}")
         self.validate_position(exit_item.position_world, require_free=False, label=f"exit {exit_item.exit_id}")
-        self.validate_position(exit_item.approach_position_world, label=f"exit approach {exit_item.exit_id}")
+        if exit_item.approach_position_world is not None:
+            self.validate_position(exit_item.approach_position_world, label=f"exit approach {exit_item.exit_id}")
         self.exits[exit_item.exit_id] = exit_item
 
     def get_exit(self, exit_id: str) -> Exit:
@@ -303,7 +328,8 @@ class WorldState:
     def validate_all_entities(self) -> None:
         for item in self.exits.values():
             self.validate_position(item.position_world, require_free=False, label=f"exit {item.exit_id}")
-            self.validate_position(item.approach_position_world, label=f"exit approach {item.exit_id}")
+            if item.approach_position_world is not None:
+                self.validate_position(item.approach_position_world, label=f"exit approach {item.exit_id}")
         for item in self.victims.values():
             self.validate_position(item.position_world, label=f"victim {item.victim_id}")
         for item in self.dynamic_obstacles.values():
@@ -313,11 +339,15 @@ class WorldState:
         return [{"id": item.victim_id, "x": item.position_world[0], "y": item.position_world[1]} for item in self.victims.values()]
 
     def legacy_exits(self) -> list[dict[str, Any]]:
-        return [{
-            "id": item.exit_id,
-            "marker": {"x": item.position_world[0], "y": item.position_world[1]},
-            "approach": {"x": item.approach_position_world[0], "y": item.approach_position_world[1]},
-        } for item in self.exits.values()]
+        result = []
+        for item in self.exits.values():
+            approach = item.approach_position_world or item.position_world
+            result.append({
+                "id": item.exit_id,
+                "marker": {"x": item.position_world[0], "y": item.position_world[1]},
+                "approach": {"x": approach[0], "y": approach[1]},
+            })
+        return result
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -326,6 +356,9 @@ class WorldState:
             "robot_position_world": self.robot_position_world,
             "travel_history": None if self.travel_history is None else self.travel_history.to_dict(),
             "active_return_plan": None if self.active_return_plan is None else self.active_return_plan.to_dict(),
+            "latest_exit_evaluations": self.latest_exit_evaluations,
+            "exit_evaluation_history": self.exit_evaluation_history,
+            "active_evacuation_plan": None if self.active_evacuation_plan is None else self.active_evacuation_plan.to_dict(),
             "static_obstacle_map": self.static_obstacle_map,
             "dynamic_obstacles": self.dynamic_obstacles,
             "exits": self.exits,

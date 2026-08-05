@@ -183,7 +183,10 @@ class PygameSimulationViewer:
             self.pygame.draw.line(self.screen, (255, 30, 30), (point[0] - 8, point[1] - 8), (point[0] + 8, point[1] + 8), 4)
             self.pygame.draw.line(self.screen, (255, 30, 30), (point[0] - 8, point[1] + 8), (point[0] + 8, point[1] - 8), 4)
 
-    def _draw_markers(self, state, start, goal, humans=(), exits=(), detected_ids=()):
+    def _draw_markers(
+        self, state, start, goal, humans=(), exits=(), detected_ids=(),
+        exit_evaluations=(), selected_exit_id=None,
+    ):
         pygame = self.pygame
         start_p = self.transform.world_to_screen(*start)
         goal_p = self.transform.world_to_screen(*goal)
@@ -203,13 +206,30 @@ class PygameSimulationViewer:
             color = (255, 100, 100) if human["id"] in detected else (170, 80, 80)
             pygame.draw.circle(self.screen, color, point, 9)
             pygame.draw.circle(self.screen, (255, 255, 255), point, 9, 2)
+        evaluations = {item.exit_id: item for item in exit_evaluations}
         for exit_item in exits:
             approach = exit_item["approach"]
             point = self.transform.world_to_screen(approach["x"], approach["y"])
+            evaluation = evaluations.get(exit_item["id"])
+            if exit_item["id"] == selected_exit_id:
+                color = (40, 245, 100)
+            elif evaluation is not None and not evaluation.accepted:
+                color = (235, 70, 70)
+            elif evaluation is not None:
+                color = (80, 210, 255)
+            else:
+                color = (210, 180, 75)
             pygame.draw.polygon(
-                self.screen, (80, 210, 255),
+                self.screen, color,
                 [(point[0], point[1] - 9), (point[0] - 8, point[1] + 7),
                  (point[0] + 8, point[1] + 7)],
+            )
+            label = exit_item["id"]
+            if evaluation is not None and evaluation.rejection_reasons:
+                label += f": {evaluation.rejection_reasons[0].value}"
+            self.screen.blit(
+                self.small_font.render(label, True, color),
+                (point[0] + 10, point[1] - 8),
             )
 
     def _draw_mini_layer(self, array, rect, title, blocked=None):
@@ -252,6 +272,7 @@ class PygameSimulationViewer:
             f"Status: {snapshot['status']}",
             f"Mission: {snapshot['mission_state']}",
             f"Navigation: {snapshot['navigation_mode']}",
+            f"Exit plan: {snapshot['exit_plan']}",
             "SPACE: pause/resume   ESC: quit",
         ]
         self.screen.blit(self.title_font.render("Simulation status", True, (245, 245, 245)), (x, y))
@@ -264,6 +285,7 @@ class PygameSimulationViewer:
         self, belief, state, start, goal, follower, trajectory, camera,
         newly_observed_cells, snapshot, humans=(), exits=(), detected_ids=(),
         travel_history=(), return_path=(), blocked_return_grid=None,
+        exit_evaluations=(), selected_exit_id=None,
     ) -> None:
         snapshot = dict(snapshot)
         snapshot["observed_ratio"] = float(belief.observed_mask.mean() * 100.0)
@@ -277,7 +299,10 @@ class PygameSimulationViewer:
         self._draw_travel_and_return(
             travel_history, return_path, blocked_return_grid
         )
-        self._draw_markers(state, start, goal, humans, exits, detected_ids)
+        self._draw_markers(
+            state, start, goal, humans, exits, detected_ids,
+            exit_evaluations, selected_exit_id,
+        )
         self.pygame.draw.rect(self.screen, (210, 210, 210), self.map_rect, 2)
         self._draw_mini_layer(
             belief.temperature_cost_map,

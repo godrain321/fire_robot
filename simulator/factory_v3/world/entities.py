@@ -39,7 +39,7 @@ class ExitStatusChange:
 class Exit:
     exit_id: str
     position_world: WorldPosition
-    approach_position_world: WorldPosition
+    approach_position_world: WorldPosition | None
     status: ExitStatus = ExitStatus.UNKNOWN
     last_checked_at: float | None = None
     blocked_reason: str | None = None
@@ -54,7 +54,8 @@ class Exit:
         if not self.exit_id:
             raise ValueError("exit_id must not be empty")
         self.position_world = _position(self.position_world)
-        self.approach_position_world = _position(self.approach_position_world)
+        if self.approach_position_world is not None:
+            self.approach_position_world = _position(self.approach_position_world)
         if not isinstance(self.status, ExitStatus):
             raise TypeError("status must be ExitStatus")
 

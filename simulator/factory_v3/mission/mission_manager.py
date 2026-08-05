@@ -21,6 +21,7 @@ class MissionState(Enum):
     APPROACH_VICTIM = "Approaching victim"
     ANNOUNCE_EVACUATION = "Announcing evacuation guidance"
     PLAN_EVACUATION = "Planning evacuation"
+    EVALUATING_EXITS = "Evaluating registered exits"
     ESCORT_VICTIM = "Escorting victim"
     EVACUATION_COMPLETE = "Evacuation complete"
     REPORT_IMMOBILE_VICTIM = "Reporting immobile victim"
@@ -54,6 +55,11 @@ class MissionEvent(Enum):
     RETURN_PATH_INVALIDATED = "return_path_invalidated"
     RETURN_COMPLETED = "return_completed"
     RETURN_FAILED = "return_failed"
+    EXIT_EVALUATION_REQUESTED = "exit_evaluation_requested"
+    SAFE_EXIT_SELECTED = "safe_exit_selected"
+    NO_SAFE_EXIT_FOUND = "no_safe_exit_found"
+    EVACUATION_PLAN_CREATED = "evacuation_plan_created"
+    EVACUATION_PLAN_FAILED = "evacuation_plan_failed"
     MISSION_ABORTED = "mission_aborted"
     ERROR_OCCURRED = "error_occurred"
 
@@ -99,6 +105,8 @@ _TRANSITIONS: dict[MissionState, dict[MissionEvent, MissionState]] = {
         MissionEvent.PATH_PLANNING_FAILED: MissionState.REPLAN,
         MissionEvent.EXIT_UNSAFE: MissionState.REPLAN,
         MissionEvent.RETURN_REQUESTED: MissionState.PLAN_RETURN_BY_HISTORY,
+        MissionEvent.EXIT_EVALUATION_REQUESTED: MissionState.EVALUATING_EXITS,
+        MissionEvent.EVACUATION_PLAN_CREATED: MissionState.ESCORT_VICTIM,
     },
     MissionState.ESCORT_VICTIM: {
         MissionEvent.PATH_BLOCKED: MissionState.REPLAN,
@@ -117,6 +125,11 @@ _TRANSITIONS: dict[MissionState, dict[MissionEvent, MissionState]] = {
     },
     MissionState.EVACUATION_COMPLETE: {
         MissionEvent.SEARCH_RESUMED: MissionState.SEARCH_EXITS,
+    },
+    MissionState.EVALUATING_EXITS: {
+        MissionEvent.SAFE_EXIT_SELECTED: MissionState.PLAN_EVACUATION,
+        MissionEvent.NO_SAFE_EXIT_FOUND: MissionState.NO_SAFE_EXIT,
+        MissionEvent.EVACUATION_PLAN_FAILED: MissionState.NO_SAFE_EXIT,
     },
     MissionState.PLAN_RETURN_BY_HISTORY: {
         MissionEvent.RETURN_PATH_CREATED: MissionState.RETURNING_BY_HISTORY,
@@ -154,6 +167,11 @@ _DEFAULT_REASONS = {
     MissionEvent.RETURN_PATH_INVALIDATED: "travel-history return path became unsafe",
     MissionEvent.RETURN_COMPLETED: "robot returned to the recorded entry position",
     MissionEvent.RETURN_FAILED: "no safe travel-history return path is available",
+    MissionEvent.EXIT_EVALUATION_REQUESTED: "victim ready; evaluating all exits",
+    MissionEvent.SAFE_EXIT_SELECTED: "safe exit selected from complete evaluation",
+    MissionEvent.NO_SAFE_EXIT_FOUND: "all registered exits were rejected",
+    MissionEvent.EVACUATION_PLAN_CREATED: "selected evacuation path activated",
+    MissionEvent.EVACUATION_PLAN_FAILED: "evacuation planning failed",
     MissionEvent.MISSION_ABORTED: "mission aborted by caller",
     MissionEvent.ERROR_OCCURRED: "mission error reported by caller",
 }
@@ -201,6 +219,7 @@ class MissionManager:
         self.selected_victim_position: tuple[float, float] | None = None
         self.selected_exit_id: str | None = None
         self.selected_exit_position: tuple[float, float] | None = None
+        self.selected_exit_reason: str | None = None
         self.current_path: Any = None
         self.replan_count = 0
         self.waiting_started_at: float | None = None
@@ -260,6 +279,8 @@ class MissionManager:
             self.selected_exit_id = str(context["exit_id"])
         if context.get("exit_position") is not None:
             self.selected_exit_position = tuple(context["exit_position"])
+        if context.get("selection_reason") is not None:
+            self.selected_exit_reason = str(context["selection_reason"])
         if context.get("path") is not None:
             self.current_path = context["path"]
         if context.get("failed_exits"):
@@ -288,6 +309,7 @@ class MissionManager:
             self.selected_victim_position = None
             self.selected_exit_id = None
             self.selected_exit_position = None
+            self.selected_exit_reason = None
             self.current_path = None
 
         transition = StateTransition(
@@ -327,6 +349,7 @@ class MissionManager:
             "selected_victim_position": self.selected_victim_position,
             "selected_exit_id": self.selected_exit_id,
             "selected_exit_position": self.selected_exit_position,
+            "selected_exit_reason": self.selected_exit_reason,
             "current_path": self.current_path,
             "replan_count": self.replan_count,
             "max_replan_count": self.max_replan_count,
