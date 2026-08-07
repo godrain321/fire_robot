@@ -25,6 +25,7 @@ class DynamicObstacleMappingConfig:
     obstacle_inflation_radius_m: float = 0.45
     stale_obstacle_timeout_s: float = 10.0
     minimum_confidence: float = 0.6
+    ignored_fds_obstacle_ids: tuple[str, ...] = ()
 
     @classmethod
     def from_mapping(cls, values):
@@ -32,6 +33,11 @@ class DynamicObstacleMappingConfig:
         unknown = set(values) - set(cls.__dataclass_fields__)
         if unknown:
             raise ValueError(f"unknown dynamic_obstacle_mapping settings: {sorted(unknown)}")
+        if "ignored_fds_obstacle_ids" in values:
+            raw = values["ignored_fds_obstacle_ids"]
+            if not isinstance(raw, (list, tuple)):
+                raise TypeError("ignored_fds_obstacle_ids must be a list")
+            values["ignored_fds_obstacle_ids"] = tuple(raw)
         return cls(**values)
 
     def __post_init__(self):
@@ -50,6 +56,17 @@ class DynamicObstacleMappingConfig:
             raise ValueError("obstacle_diameter_m must be positive")
         if not 0.0 <= self.minimum_confidence <= 1.0:
             raise ValueError("minimum_confidence must be in [0,1]")
+        if any(
+            not isinstance(item, str) or not item
+            for item in self.ignored_fds_obstacle_ids
+        ):
+            raise ValueError(
+                "ignored_fds_obstacle_ids must contain non-empty strings"
+            )
+        if len(set(self.ignored_fds_obstacle_ids)) != len(
+            self.ignored_fds_obstacle_ids
+        ):
+            raise ValueError("ignored_fds_obstacle_ids must not contain duplicates")
 
 
 @dataclass
@@ -73,7 +90,10 @@ class DynamicObstacleMappingUpdate:
 
 
 class DynamicObstacleMapper:
-    def __init__(self, metadata, static_obstacle_map, config=None):
+    def __init__(
+        self, metadata, static_obstacle_map, config=None,
+        *, ignored_fds_bounds_world=(),
+    ):
         import numpy as np
 
         self.metadata = metadata
@@ -84,6 +104,11 @@ class DynamicObstacleMapper:
         self._tracks: list[_ObservationTrack] = []
         self._next_id = 1
         self._processed_observation_ids: set[str] = set()
+        self.ignored_fds_bounds_world = tuple(
+            tuple(map(float, bounds)) for bounds in ignored_fds_bounds_world
+        )
+        if any(len(bounds) != 6 for bounds in self.ignored_fds_bounds_world):
+            raise ValueError("ignored FDS bounds must contain six XB values")
 
     def process_thermal_rays(
         self, observation_id: str, ray_observations, *, simulation_time: float,
@@ -105,6 +130,8 @@ class DynamicObstacleMapper:
             if not all(math.isfinite(value) for value in point):
                 continue
             if not self.metadata.is_world_position_in_bounds(*point):
+                continue
+            if self._matches_ignored_fds_mesh(sample.world_position):
                 continue
             col, row = self.metadata.world_to_grid(*point)
             if self.static_obstacle_map[row, col]:
@@ -185,6 +212,18 @@ class DynamicObstacleMapper:
         return DynamicObstacleMappingUpdate(
             tuple(endpoints), tuple(confirmed), tuple(updated), rejected_static,
             changed,
+        )
+
+    def _matches_ignored_fds_mesh(self, world_position) -> bool:
+        """Match only the exact configured FDS door-mesh volume."""
+        x, y = float(world_position[0]), float(world_position[1])
+        z = float(world_position[2]) if len(world_position) >= 3 else 0.0
+        epsilon = 1e-9
+        return any(
+            x1 - epsilon <= x <= x2 + epsilon
+            and y1 - epsilon <= y <= y2 + epsilon
+            and z1 - epsilon <= z <= z2 + epsilon
+            for x1, x2, y1, y2, z1, z2 in self.ignored_fds_bounds_world
         )
 
     def _nearest_track(self, point):

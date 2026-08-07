@@ -224,8 +224,24 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     dynamic_mapping_config = DynamicObstacleMappingConfig.from_mapping(
         args.dynamic_obstacle_mapping_config
     )
+    obstacle_by_id = {
+        item.get("id"): item for item in obstacles if item.get("id")
+    }
+    missing_ignored_meshes = sorted(
+        set(dynamic_mapping_config.ignored_fds_obstacle_ids) - obstacle_by_id.keys()
+    )
+    if missing_ignored_meshes:
+        raise ValueError(
+            "unknown ignored FDS obstacle IDs: "
+            f"{missing_ignored_meshes}"
+        )
+    ignored_fds_bounds = tuple(
+        obstacle_by_id[obstacle_id]["xb"]
+        for obstacle_id in dynamic_mapping_config.ignored_fds_obstacle_ids
+    )
     dynamic_obstacle_mapper = DynamicObstacleMapper(
         world.map_metadata, world.known_occupancy_map, dynamic_mapping_config,
+        ignored_fds_bounds_world=ignored_fds_bounds,
     )
     if config.use_inflation and not math.isclose(
         dynamic_mapping_config.obstacle_inflation_radius_m,

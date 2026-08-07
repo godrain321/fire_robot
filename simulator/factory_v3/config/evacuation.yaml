@@ -125,6 +125,21 @@ dynamic_obstacle_mapping:
   obstacle_inflation_radius_m: 0.45
   stale_obstacle_timeout_s: 10.0
   minimum_confidence: 0.6
+  # These are intentional EXIT_SOLID door meshes, not newly introduced
+  # obstacles. Only ray endpoints inside their exact FDS XB volumes are
+  # ignored; observations elsewhere continue through normal confirmation.
+  ignored_fds_obstacle_ids:
+    - V3_EXIT2_0012
+    - V3_EXIT2_0013
+    - V3_EXIT2_0014
+    - V3_EXIT2_0015
+    - V3_EXIT3_0016
+    - V3_EXIT3_0017
+    - V3_EXIT3_0018
+    - V3_EXIT3_0019
+    - V3_EXIT3_0020
+    - V3_EXIT3_0021
+    - V3_EXIT3_0022
 
 exit_blockage:
   enabled: true
