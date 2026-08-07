@@ -31,7 +31,7 @@ def _scenario_grid():
 
 
 def test_catf_geometry_is_loaded():
-    mesh, obstacles, _ = load_factory_geometry(BASE / "factory_v3.fds")
+    mesh, obstacles, holes = load_factory_geometry(BASE / "factory_v3.fds")
     assert mesh == [1.8, 30.0, 5.6, 28.0, 0.0, 3.0]
     assert len(obstacles) > 600
 
@@ -49,6 +49,19 @@ def test_world_grid_roundtrip_and_boundaries():
         assert abs(roundtrip[0] - x) <= grid.resolution / 2 + 1e-6
         assert abs(roundtrip[1] - y) <= grid.resolution / 2 + 1e-6
     assert not grid.in_bounds(grid.world_to_grid(mesh[1] + grid.resolution, mesh[3]))
+
+
+def test_smokeview_boundary_display_is_separate_from_inflated_planner_map():
+    mesh, obstacles, holes = load_factory_geometry(BASE / "factory_v3.fds")
+    point = (13.2, 11.4)
+    planner = GridMap(mesh, obstacles, holes, resolution=0.2, clearance=0.45)
+    display = GridMap(
+        mesh, obstacles, holes, resolution=0.2, clearance=0.0,
+        include_lower_obstacle_boundary=False,
+    )
+    node = planner.world_to_grid(*point)
+    assert planner.is_blocked(node)  # Robot clearance remains conservative.
+    assert not display.is_blocked(node)  # Smokeview/FDS lower boundary stays open.
 
 
 def test_configured_mission_points_are_explicit_and_free():

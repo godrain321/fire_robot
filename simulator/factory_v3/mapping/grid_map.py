@@ -4,7 +4,10 @@ import math
 class GridMap:
     """A 2-D lattice map built from the FDS mesh and OBST/HOLE records."""
 
-    def __init__(self, mesh_xb, obstacles, holes, resolution=0.5, clearance=0.45):
+    def __init__(
+        self, mesh_xb, obstacles, holes, resolution=0.5, clearance=0.45,
+        *, include_lower_obstacle_boundary=True,
+    ):
         if resolution <= 0.0:
             raise ValueError("resolution must be positive")
 
@@ -12,6 +15,9 @@ class GridMap:
         self.y_min, self.y_max = mesh_xb[2], mesh_xb[3]
         self.resolution = float(resolution)
         self.clearance = max(0.0, float(clearance))
+        self.include_lower_obstacle_boundary = bool(
+            include_lower_obstacle_boundary
+        )
         self.width = int(round((self.x_max - self.x_min) / self.resolution)) + 1
         self.height = int(round((self.y_max - self.y_min) / self.resolution)) + 1
 
@@ -58,6 +64,15 @@ class GridMap:
 
     def _inside_expanded_xb(self, x, y, xb):
         x1, x2, y1, y2 = xb[:4]
+        if self.clearance == 0.0 and not self.include_lower_obstacle_boundary:
+            # Display-only point sampling assigns a boundary cell to the free
+            # space immediately before an OBST begins. This avoids drawing an
+            # extra cell outside the exact Smokeview/FDS rectangle.
+            tolerance = 1e-9
+            return (
+                min(x1, x2) + tolerance < x <= max(x1, x2) + tolerance
+                and min(y1, y2) + tolerance < y <= max(y1, y2) + tolerance
+            )
         return (
             min(x1, x2) - self.clearance <= x <= max(x1, x2) + self.clearance
             and min(y1, y2) - self.clearance <= y <= max(y1, y2) + self.clearance
@@ -67,6 +82,12 @@ class GridMap:
         x1, x2, y1, y2 = xb[:4]
         left, right = min(x1, x2), max(x1, x2)
         bottom, top = min(y1, y2), max(y1, y2)
+        if self.clearance == 0.0 and not self.include_lower_obstacle_boundary:
+            tolerance = 1e-9
+            return (
+                left + tolerance < x <= right + tolerance
+                and bottom + tolerance < y <= top + tolerance
+            )
         return (
             left - self.clearance <= x <= right + self.clearance
             and bottom + self.clearance <= y <= top - self.clearance

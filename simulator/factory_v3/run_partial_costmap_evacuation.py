@@ -190,6 +190,11 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         config.inflation_radius if config.use_inflation else 0.0,
     )
     static_map = np.asarray(grid_map.occupancy, dtype=bool)
+    display_grid_map = GridMap(
+        mesh_xb, obstacles, holes, config.grid_resolution, 0.0,
+        include_lower_obstacle_boundary=False,
+    )
+    display_static_map = np.asarray(display_grid_map.occupancy, dtype=bool)
     belief = PartialFireCostmap(grid_map, static_map, config)
     world = WorldState.from_scenario(args.scenario, grid_map, config)
     # Existing detector and viewer APIs remain dictionary-based adapters.
@@ -502,7 +507,10 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     pygame_viewer = None
     thermal_viewer = None
     if not args.headless:
-        pygame_viewer = PygameSimulationViewer(grid_map, config)
+        pygame_viewer = PygameSimulationViewer(
+            grid_map, config,
+            display_static_obstacle_map=display_static_map,
+        )
         if not args.no_thermal_window:
             try:
                 thermal_viewer = MatplotlibThermalViewer()

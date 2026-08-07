@@ -57,7 +57,10 @@ class PygameSimulationViewer:
     RETURN_PATH = (220, 80, 245)
     NEW_OBSERVATION = (255, 235, 80)
 
-    def __init__(self, grid_map, config, title="Partial Costmap Evacuation") -> None:
+    def __init__(
+        self, grid_map, config, title="Partial Costmap Evacuation",
+        *, display_static_obstacle_map=None,
+    ) -> None:
         import pygame
 
         pygame.init()
@@ -71,6 +74,17 @@ class PygameSimulationViewer:
         self.map_rect = pygame.Rect(15, 15, 730, 870)
         self.transform = WorldTransform(grid_map, self.map_rect)
         self.grid_map = grid_map
+        display_static = (
+            np.asarray(grid_map.occupancy, dtype=bool)
+            if display_static_obstacle_map is None
+            else np.asarray(display_static_obstacle_map, dtype=bool)
+        )
+        expected = (grid_map.height, grid_map.width)
+        if display_static.shape != expected:
+            raise ValueError(
+                f"display static map shape={display_static.shape}, expected={expected}"
+            )
+        self.display_static_obstacle_map = display_static.copy()
         self.config = config
         self.running = True
         self.paused = False
@@ -117,9 +131,12 @@ class PygameSimulationViewer:
         for gy in range(self.grid_map.height):
             for gx in range(self.grid_map.width):
                 rect = self.transform.grid_rect(gx, gy)
-                if belief.static_obstacle_map[gy, gx]:
+                if self.display_static_obstacle_map[gy, gx]:
                     pygame.draw.rect(self.screen, self.STATIC, rect)
-                elif belief.blocked_mask[gy, gx]:
+                elif (
+                    belief.blocked_mask[gy, gx]
+                    and not belief.static_obstacle_map[gy, gx]
+                ):
                     pygame.draw.rect(self.screen, self.BLOCKED, rect)
 
     def _draw_sensor_area(self, state, camera, newly_observed_cells, gas_radius):
