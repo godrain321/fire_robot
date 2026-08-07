@@ -40,7 +40,7 @@ def build():
         history.record_position(point, recorded_at=index)
     world.attach_travel_history(history)
     evaluator = ExitEvaluator(
-        metadata, ExitEvaluationConfig(max_unknown_ratio=1),
+        metadata, ExitEvaluationConfig(),
         temperature_blocked_c=60, co_blocked_ppm=1600, base_cost=1,
     )
     selector = EvacuationStrategySelector(

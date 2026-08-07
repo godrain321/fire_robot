@@ -31,7 +31,7 @@ def setup_system():
         history.record_position(point, recorded_at=time)
     world.attach_travel_history(history)
     evaluator = ExitEvaluator(
-        metadata, ExitEvaluationConfig(max_unknown_ratio=1),
+        metadata, ExitEvaluationConfig(),
         temperature_blocked_c=60, co_blocked_ppm=1600, base_cost=1,
     )
     selector = EvacuationStrategySelector(
@@ -107,6 +107,27 @@ def test_cost_increase_replan_can_exclude_current_exit():
     assert decision.target_exit_id == "FAR"
 
 
+def test_opposite_exit_replan_uses_world_direction_and_excludes_front():
+    world, _, selector, costs = setup_system()
+    decision = selector.replan_to_opposite_exit(
+        world_state=world, current_position_world=(2, 0),
+        direction_world=(1, 0), cost_map=costs,
+        costmap_revision=10, created_at=10, current_exit_id="NEAR",
+        minimum_direction_difference_deg=90,
+    )
+    assert not decision.success  # FAR is also in the forward half-plane.
+
+    world.add_exit(Exit("BACK", (0, 1), (0, 1)))
+    decision = selector.replan_to_opposite_exit(
+        world_state=world, current_position_world=(2, 0),
+        direction_world=(1, 0), cost_map=costs,
+        costmap_revision=11, created_at=11, current_exit_id="NEAR",
+        minimum_direction_difference_deg=90,
+    )
+    assert decision.success
+    assert decision.target_exit_id == "BACK"
+
+
 def test_path_validation_finds_dynamic_obstacle():
     from world import DynamicObstacle, DynamicObstacleStatus
     world, _, selector, costs = setup_system()
@@ -126,10 +147,6 @@ def test_settings_reject_invalid_values():
         EvacuationRouteSelectionConfig(
             no_fire_information_strategy="nearest_exit"
         )
-    with pytest.raises(ValueError):
-        EvacuationRouteSelectionConfig(route_cost_increase_ratio=1.0)
-    with pytest.raises(ValueError):
-        EvacuationRouteSelectionConfig(route_cost_min_absolute_increase=-0.1)
     with pytest.raises(ValueError):
         HazardKnowledgeConfig(temperature_elevated_c=-1)
     with pytest.raises(ValueError):

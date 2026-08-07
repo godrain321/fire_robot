@@ -17,9 +17,10 @@ class EvacuationFailureReason(Enum):
 
 @dataclass(frozen=True)
 class ExitSelectionConfig:
-    primary_key: str = "accumulated_risk_cost"
-    secondary_key: str = "path_length_m"
-    tertiary_key: str = "unknown_ratio"
+    prefer_confirmed_usable_exit: bool = True
+    fallback_to_shortest_reachable_exit: bool = True
+    primary_key: str = "path_length_m"
+    secondary_key: str = "accumulated_risk_cost"
     final_tie_breaker: str = "exit_id"
     float_tolerance: float = 1e-6
 
@@ -28,12 +29,15 @@ class ExitSelectionConfig:
             self.float_tolerance, (int, float)
         ):
             raise TypeError("float_tolerance must be numeric")
-        expected = (
-            "accumulated_risk_cost", "path_length_m", "unknown_ratio", "exit_id"
-        )
+        for name in (
+            "prefer_confirmed_usable_exit",
+            "fallback_to_shortest_reachable_exit",
+        ):
+            if not isinstance(getattr(self, name), bool):
+                raise TypeError(f"{name} must be bool")
+        expected = ("path_length_m", "accumulated_risk_cost", "exit_id")
         actual = (
-            self.primary_key, self.secondary_key,
-            self.tertiary_key, self.final_tie_breaker,
+            self.primary_key, self.secondary_key, self.final_tie_breaker,
         )
         if actual != expected:
             raise ValueError(f"unsupported exit selection order: {actual}")
@@ -118,16 +122,28 @@ class EvacuationPlanner:
         def bucket(value):
             return int(round(float(value) / tolerance))
 
-        accepted.sort(key=lambda item: (
-            bucket(item.accumulated_risk_cost),
+        confirmed = [item for item in accepted if item.exit_status == "usable"]
+        if self.config.prefer_confirmed_usable_exit and confirmed:
+            candidates = confirmed
+        elif (
+            self.config.prefer_confirmed_usable_exit
+            and not self.config.fallback_to_shortest_reachable_exit
+        ):
+            return self._failure(
+                start, evaluations, EvacuationFailureReason.NO_SAFE_EXIT,
+                created_at,
+            )
+        else:
+            candidates = accepted
+        candidates.sort(key=lambda item: (
             bucket(item.path_length_m),
-            bucket(item.unknown_ratio),
+            bucket(item.accumulated_risk_cost),
             item.exit_id,
         ))
-        selected = accepted[0]
+        selected = candidates[0]
         reason = (
-            "lowest accumulated risk cost; ties resolved by path length, "
-            "unknown ratio, then exit_id"
+            "confirmed usable exits preferred; shortest cost-aware A* path; "
+            "ties resolved by accumulated risk cost then exit_id"
         )
         return EvacuationPlan(
             True, start, selected.exit_id, selected.exit_position_world,

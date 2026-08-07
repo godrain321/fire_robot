@@ -138,7 +138,7 @@ def test_path_fire_thresholds(kind, value, reason):
         assert reason in result.rejection_reasons
 
 
-def test_exit_neighborhood_risk_and_unknown_policy():
+def test_exit_neighborhood_risk_and_unknown_ratio_is_informational():
     item = Exit("E", (4, 0), (4, 0))
     hot, *_ = evaluate(item, temperature=((1, 4), 70))
     assert ExitRejectionReason.TEMPERATURE_LIMIT_EXCEEDED in hot.rejection_reasons
@@ -147,13 +147,14 @@ def test_exit_neighborhood_risk_and_unknown_policy():
 
     metadata, fire, cost, static = environment()
     fire.observed_mask[0, 1:4] = False
-    result = evaluator(metadata, max_unknown_ratio=0.5).evaluate(
+    result = evaluator(metadata).evaluate(
         item, (0, 0), cost_map=cost, static_obstacle_map=static,
         dynamic_obstacle_map=np.zeros_like(static), estimated_fire_map=fire,
         evaluated_at=1,
     )
     assert result.unknown_ratio == pytest.approx(3 / 5)
-    assert ExitRejectionReason.INSUFFICIENT_OBSERVATION in result.rejection_reasons
+    assert result.accepted
+    assert result.rejection_reasons == tuple()
 
 
 @pytest.mark.parametrize("invalid", [np.nan, np.inf])
@@ -168,8 +169,7 @@ def test_config_validation():
     for kwargs in (
         {"exit_neighborhood_radius_m": -1},
         {"approach_search_radius_m": 0},
-        {"max_unknown_ratio": 1.1},
-        {"unknown_cell_policy": "safe"},
+        {"usable_confirmation_max_unknown_ratio": 1.1},
     ):
         with pytest.raises(ValueError):
             ExitEvaluationConfig(**kwargs)

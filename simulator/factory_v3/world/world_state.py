@@ -104,6 +104,21 @@ class WorldState:
         self.final_route_failure_reason: str | None = None
         self.active_path_simplification = None
         self.path_simplification_history: list[Any] = []
+        self.current_target_exit_id: str | None = None
+        self.current_target_selection_reason: str | None = None
+        self.current_target_is_usable = False
+        self.exit_path_lengths_m: dict[str, float] = {}
+        self.remaining_route_cost: dict[str, float] | None = None
+        self.route_cost_baseline: float | None = None
+        self.route_cost_history: list[Any] = []
+        self.consecutive_route_cost_increases = 0
+        self.route_costmap_revision: int | None = None
+        self.exit_switch_occurred = False
+        self.previous_target_exit_id: str | None = None
+        self.last_exit_switch_reason: str | None = None
+        self.last_exit_switch_at: float | None = None
+        self.exit_switch_cooldown_until: float | None = None
+        self.last_exit_switch_validation: str | None = None
 
     @classmethod
     def from_scenario(cls, scenario: dict[str, Any], grid_map, config) -> "WorldState":
@@ -256,6 +271,48 @@ class WorldState:
             evacuation_plan if evacuation_plan.success else None
         )
 
+    def record_exit_selection(
+        self, exit_id: str, *, reason: str, costmap_revision: int,
+        path_lengths_m=None,
+    ) -> None:
+        exit_item = self.get_exit(exit_id)
+        self.current_target_exit_id = exit_item.exit_id
+        self.current_target_selection_reason = str(reason)
+        self.current_target_is_usable = exit_item.status is ExitStatus.USABLE
+        self.route_costmap_revision = int(costmap_revision)
+        self.exit_path_lengths_m = {
+            str(key): float(value) for key, value in dict(path_lengths_m or {}).items()
+        }
+
+    def record_route_cost(self, sample, *, baseline, consecutive: int) -> None:
+        self.remaining_route_cost = {
+            "accumulated": float(sample.accumulated_cost),
+            "average": float(sample.average_cost),
+            "maximum": float(sample.maximum_cost),
+        }
+        self.route_cost_baseline = None if baseline is None else float(baseline)
+        self.route_cost_history.append(sample)
+        self.consecutive_route_cost_increases = int(consecutive)
+        self.route_costmap_revision = int(sample.costmap_revision)
+
+    def record_exit_switch(
+        self, *, previous_exit_id: str, new_exit_id: str, reason: str,
+        sim_time: float, cooldown_seconds: float, validation_result: str,
+    ) -> None:
+        self.exit_switch_occurred = True
+        self.previous_target_exit_id = str(previous_exit_id)
+        self.current_target_exit_id = str(new_exit_id)
+        self.last_exit_switch_reason = str(reason)
+        self.last_exit_switch_at = float(sim_time)
+        self.exit_switch_cooldown_until = float(sim_time) + float(cooldown_seconds)
+        self.last_exit_switch_validation = str(validation_result)
+
+    def exit_switch_is_cooling_down(self, sim_time: float) -> bool:
+        return (
+            self.exit_switch_cooldown_until is not None
+            and float(sim_time) < self.exit_switch_cooldown_until
+        )
+
     def clear_active_evacuation_plan(self) -> None:
         self.active_evacuation_plan = None
 
@@ -282,6 +339,8 @@ class WorldState:
 
     def update_exit_status(self, exit_id: str, status: ExitStatus, **context) -> None:
         self.get_exit(exit_id).update_status(status, sim_time=context.pop("sim_time", self.simulation_time), **context)
+        if self.current_target_exit_id == exit_id:
+            self.current_target_is_usable = status is ExitStatus.USABLE
 
     def add_victim(self, victim: Victim) -> None:
         if victim.victim_id in self.victims:
@@ -448,6 +507,21 @@ class WorldState:
             "final_route_failure_reason": self.final_route_failure_reason,
             "active_path_simplification": self.active_path_simplification,
             "path_simplification_history": self.path_simplification_history,
+            "current_target_exit_id": self.current_target_exit_id,
+            "current_target_selection_reason": self.current_target_selection_reason,
+            "current_target_is_usable": self.current_target_is_usable,
+            "exit_path_lengths_m": self.exit_path_lengths_m,
+            "remaining_route_cost": self.remaining_route_cost,
+            "route_cost_baseline": self.route_cost_baseline,
+            "route_cost_history": self.route_cost_history,
+            "consecutive_route_cost_increases": self.consecutive_route_cost_increases,
+            "route_costmap_revision": self.route_costmap_revision,
+            "exit_switch_occurred": self.exit_switch_occurred,
+            "previous_target_exit_id": self.previous_target_exit_id,
+            "last_exit_switch_reason": self.last_exit_switch_reason,
+            "last_exit_switch_at": self.last_exit_switch_at,
+            "exit_switch_cooldown_until": self.exit_switch_cooldown_until,
+            "last_exit_switch_validation": self.last_exit_switch_validation,
             "static_obstacle_map": self.static_obstacle_map,
             "dynamic_obstacles": self.dynamic_obstacles,
             "exits": self.exits,

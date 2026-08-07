@@ -29,7 +29,6 @@ class ExitRejectionReason(Enum):
     CO_LIMIT_EXCEEDED = "co_limit_exceeded"
     INVALID_COST = "invalid_cost"
     OUT_OF_MAP = "out_of_map"
-    INSUFFICIENT_OBSERVATION = "insufficient_observation"
 
 
 @dataclass(frozen=True)
@@ -40,8 +39,7 @@ class ExitEvaluationConfig:
     reject_dangerous_exit: bool = True
     reject_path_over_threshold: bool = True
     reject_invalid_cost: bool = True
-    unknown_cell_policy: str = "penalize"
-    max_unknown_ratio: float = 0.5
+    usable_confirmation_max_unknown_ratio: float = 0.5
 
     def __post_init__(self) -> None:
         for name in (
@@ -52,7 +50,6 @@ class ExitEvaluationConfig:
                 raise TypeError(f"{name} must be bool")
         for name in (
             "exit_neighborhood_radius_m", "approach_search_radius_m",
-            "max_unknown_ratio",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -61,10 +58,10 @@ class ExitEvaluationConfig:
             raise ValueError("exit_neighborhood_radius_m must be non-negative")
         if self.approach_search_radius_m <= 0:
             raise ValueError("approach_search_radius_m must be positive")
-        if self.unknown_cell_policy not in {"reject", "penalize", "allow"}:
-            raise ValueError("unknown_cell_policy must be reject, penalize, or allow")
-        if not 0.0 <= self.max_unknown_ratio <= 1.0:
-            raise ValueError("max_unknown_ratio must be in [0,1]")
+        if not 0.0 <= self.usable_confirmation_max_unknown_ratio <= 1.0:
+            raise ValueError(
+                "usable_confirmation_max_unknown_ratio must be in [0,1]"
+            )
 
     @classmethod
     def from_mapping(cls, values: dict[str, Any] | None) -> "ExitEvaluationConfig":
@@ -227,14 +224,6 @@ class ExitEvaluator:
                 or (exit_co is not None and exit_co >= self.co_blocked_ppm)
             ):
                 reasons.append(ExitRejectionReason.CO_LIMIT_EXCEEDED)
-        if self.config.unknown_cell_policy == "reject" and unknown_ratio > 0:
-            reasons.append(ExitRejectionReason.INSUFFICIENT_OBSERVATION)
-        elif (
-            self.config.unknown_cell_policy == "penalize"
-            and unknown_ratio > self.config.max_unknown_ratio
-        ):
-            reasons.append(ExitRejectionReason.INSUFFICIENT_OBSERVATION)
-
         return ExitEvaluation(
             exit_item.exit_id, exit_item.status.value,
             tuple(exit_item.position_world), approach_world, approach_grid,

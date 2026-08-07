@@ -91,8 +91,8 @@ def test_factory_config_and_invalid_settings():
     scenario = yaml.safe_load((BASE / "config/evacuation.yaml").read_text())
     evaluation = ExitEvaluationConfig.from_mapping(scenario["exit_evaluation"])
     selection = ExitSelectionConfig.from_mapping(scenario["exit_selection"])
-    assert evaluation.max_unknown_ratio == 0.5
-    assert selection.primary_key == "accumulated_risk_cost"
+    assert evaluation.usable_confirmation_max_unknown_ratio == 0.5
+    assert selection.primary_key == "path_length_m"
     with pytest.raises(ValueError):
         ExitEvaluationConfig.from_mapping({"unknown_cell_policy": "safe"})
     with pytest.raises(ValueError):

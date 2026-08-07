@@ -58,13 +58,14 @@ exit_evaluation:
   reject_dangerous_exit: true
   reject_path_over_threshold: true
   reject_invalid_cost: true
-  unknown_cell_policy: penalize
-  max_unknown_ratio: 0.5
+  # Observation coverage confirms USABLE status but never rejects a route.
+  usable_confirmation_max_unknown_ratio: 0.5
 
 exit_selection:
-  primary_key: accumulated_risk_cost
-  secondary_key: path_length_m
-  tertiary_key: unknown_ratio
+  prefer_confirmed_usable_exit: true
+  fallback_to_shortest_reachable_exit: true
+  primary_key: path_length_m
+  secondary_key: accumulated_risk_cost
   final_tie_breaker: exit_id
   float_tolerance: 1.0e-6
 
@@ -86,8 +87,15 @@ evacuation_route_selection:
   fire_information_strategy: evaluate_all_exits
   prefer_original_entrance_on_return_failure: true
   evaluate_alternative_exits_on_entrance_failure: true
-  route_cost_increase_ratio: 1.10
-  route_cost_min_absolute_increase: 0.25
+
+exit_switching:
+  enabled: true
+  evaluation_window: 5
+  minimum_consecutive_increases: 3
+  minimum_increase_ratio: 0.10
+  minimum_absolute_increase: 0.25
+  minimum_direction_difference_deg: 90.0
+  switch_cooldown_sec: 10.0
 
 path_validation:
   validate_on_costmap_revision: true

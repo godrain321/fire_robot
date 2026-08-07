@@ -14,6 +14,7 @@ from typing import Any
 
 import numpy as np
 
+from navigation.exit_switching import is_opposite_direction
 from planner.a_star import weighted_a_star
 
 
@@ -120,8 +121,6 @@ class EvacuationRouteSelectionConfig:
     fire_information_strategy: str = "evaluate_all_exits"
     prefer_original_entrance_on_return_failure: bool = True
     evaluate_alternative_exits_on_entrance_failure: bool = True
-    route_cost_increase_ratio: float = 1.10
-    route_cost_min_absolute_increase: float = 0.25
 
     def __post_init__(self) -> None:
         for name in (
@@ -134,18 +133,6 @@ class EvacuationRouteSelectionConfig:
             raise ValueError("unsupported no-fire-information strategy")
         if self.fire_information_strategy != "evaluate_all_exits":
             raise ValueError("unsupported fire-information strategy")
-        if (
-            isinstance(self.route_cost_increase_ratio, bool)
-            or self.route_cost_increase_ratio <= 1.0
-        ):
-            raise ValueError("route_cost_increase_ratio must be greater than 1")
-        if (
-            isinstance(self.route_cost_min_absolute_increase, bool)
-            or self.route_cost_min_absolute_increase < 0.0
-        ):
-            raise ValueError(
-                "route_cost_min_absolute_increase must be non-negative"
-            )
 
     @classmethod
     def from_mapping(cls, values):
@@ -329,64 +316,10 @@ class EvacuationStrategySelector:
         not claim that they are safe; it deliberately gathers observations while
         moving and the active route is rechecked after every belief revision.
         """
-        try:
-            start = self.map_metadata.world_to_grid(*start_world)
-        except ValueError:
-            return self._failure(
-                hazard, RouteFailureReason.OUT_OF_MAP, created_at, revision,
-                ("victim evacuation start is outside map",),
-            )
-        excluded = {str(item) for item in excluded_exit_ids}
-        dynamic = world.dynamic_obstacle_mask()
-        effective = self._effective_cost(
-            cost_map, world.static_obstacle_map, dynamic,
-            world.estimated_fire_map,
-        )
-        candidates = []
-        for exit_item in sorted(world.exits.values(), key=lambda item: item.exit_id):
-            if exit_item.exit_id in excluded or exit_item.status.value in {
-                "blocked", "dangerous"
-            }:
-                continue
-            target_world = (
-                exit_item.approach_position_world or exit_item.position_world
-            )
-            try:
-                target = self.map_metadata.world_to_grid(*target_world)
-            except ValueError:
-                continue
-            col, row = target
-            if not math.isfinite(float(effective[row, col])):
-                continue
-            result = weighted_a_star(effective, start, target)
-            if not result.path:
-                continue
-            length_m = sum(
-                math.hypot(b[0] - a[0], b[1] - a[1])
-                * self.map_metadata.resolution_m
-                for a, b in zip(result.path, result.path[1:])
-            )
-            candidates.append((length_m, exit_item.exit_id, target_world, result))
-        if not candidates:
-            return self._failure(
-                hazard, RouteFailureReason.NO_SAFE_EXIT, created_at, revision,
-                ("no reachable exit remains for no-fire-information routing",),
-            )
-        length_m, exit_id, target_world, result = min(
-            candidates, key=lambda item: (item[0], item[1])
-        )
-        path_grid = tuple(result.path)
-        path_world = tuple(
-            self.map_metadata.grid_to_world(col, row) for col, row in path_grid
-        )
-        return EvacuationRouteDecision(
-            True, EvacuationStrategy.NEAREST_REACHABLE_EXIT,
-            exit_id, tuple(target_world), path_world, path_grid, hazard, None,
-            (
-                "no fire information; selected shortest reachable exit "
-                f"({length_m:.3f} m) and will monitor route cost",
-            ),
-            float(created_at), int(revision),
+        return self._plan_exits(
+            world, start_world, cost_map, hazard, revision, created_at,
+            EvacuationStrategy.NEAREST_REACHABLE_EXIT,
+            excluded_exit_ids=excluded_exit_ids,
         )
 
     def replan_after_return_invalidated(
@@ -431,6 +364,37 @@ class EvacuationStrategySelector:
             excluded_exit_ids=excluded_exit_ids,
         )
 
+    def replan_to_opposite_exit(
+        self, *, world_state, current_position_world, direction_world, cost_map,
+        costmap_revision: int, created_at: float, current_exit_id: str,
+        minimum_direction_difference_deg: float,
+    ) -> EvacuationRouteDecision:
+        """Evaluate only safe exits in the robot's rear world-space sector."""
+        candidate_ids = {
+            item.exit_id for item in world_state.exits.values()
+            if item.exit_id != current_exit_id
+            and is_opposite_direction(
+                direction_world, current_position_world,
+                item.position_world,
+                minimum_difference_deg=minimum_direction_difference_deg,
+            )
+        }
+        hazard = self.hazard_tracker.evaluate(
+            world_state.estimated_fire_map, evaluated_at=created_at,
+            fire_related_event="sustained_route_cost_increase",
+        )
+        if not candidate_ids:
+            return self._failure(
+                hazard, RouteFailureReason.NO_SAFE_EXIT, created_at,
+                costmap_revision, ("no opposite-direction exit candidate",),
+            )
+        return self._plan_exits(
+            world_state, current_position_world, cost_map, hazard,
+            costmap_revision, created_at,
+            EvacuationStrategy.REPLAN_TO_ALTERNATIVE_EXIT,
+            candidate_exit_ids=candidate_ids,
+        )
+
     def _plan_to_position(
         self, world, start_world, goal_world, cost_map, hazard, revision, created_at,
     ):
@@ -465,7 +429,7 @@ class EvacuationStrategySelector:
 
     def _plan_exits(
         self, world, start_world, cost_map, hazard, revision, created_at, strategy,
-        *, excluded_exit_ids=(),
+        *, excluded_exit_ids=(), candidate_exit_ids=None,
     ):
         dynamic = world.dynamic_obstacle_mask()
         effective = self._effective_cost(
@@ -473,8 +437,16 @@ class EvacuationStrategySelector:
             world.estimated_fire_map,
         )
         excluded = {str(item) for item in excluded_exit_ids}
+        allowed = (
+            None if candidate_exit_ids is None
+            else {str(item) for item in candidate_exit_ids}
+        )
         plan = self.evacuation_planner.plan(
-            (item for item in world.exits.values() if item.exit_id not in excluded),
+            (
+                item for item in world.exits.values()
+                if item.exit_id not in excluded
+                and (allowed is None or item.exit_id in allowed)
+            ),
             start_world, cost_map=effective,
             static_obstacle_map=world.static_obstacle_map,
             dynamic_obstacle_map=dynamic,

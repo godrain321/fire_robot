@@ -6,9 +6,9 @@ from planner.evacuation_planner import (
 from planner.exit_evaluator import ExitEvaluation
 
 
-def evaluation(exit_id, risk, length, unknown, accepted=True):
+def evaluation(exit_id, risk, length, unknown, accepted=True, status="unknown"):
     return ExitEvaluation(
-        exit_id, "unknown", (0, 0), (1, 1), (1, 1), accepted, accepted,
+        exit_id, status, (0, 0), (1, 1), (1, 1), accepted, accepted,
         ((0, 0), (1, 1)) if accepted else tuple(),
         ((0, 0), (1, 1)) if accepted else tuple(),
         length if accepted else None, risk if accepted else None,
@@ -39,22 +39,22 @@ def run(values):
     )
 
 
-def test_priority_risk_then_length_then_unknown_then_id():
+def test_priority_usable_then_length_then_risk_then_id():
     values = {
         "risk": evaluation("risk", 0.5, 10, 0.5),
         "short": evaluation("short", 1.0, 3, 0.5),
     }
-    assert run(values).selected_exit_id == "risk"
+    assert run(values).selected_exit_id == "short"
     values = {
         "long": evaluation("long", 1, 5, 0.1),
         "short": evaluation("short", 1, 4, 0.9),
     }
     assert run(values).selected_exit_id == "short"
     values = {
-        "unknown-high": evaluation("unknown-high", 1, 4, 0.5),
-        "unknown-low": evaluation("unknown-low", 1, 4, 0.1),
+        "near": evaluation("near", 1, 2, 0.5),
+        "confirmed": evaluation("confirmed", 5, 8, 0.5, status="usable"),
     }
-    assert run(values).selected_exit_id == "unknown-low"
+    assert run(values).selected_exit_id == "confirmed"
     values = {"B": evaluation("B", 1, 4, 0.1), "A": evaluation("A", 1, 4, 0.1)}
     assert run(values).selected_exit_id == "A"
 
@@ -82,7 +82,7 @@ def test_all_rejected_and_no_exits_never_select_default():
 
 def test_selection_config_rejects_changed_order():
     try:
-        ExitSelectionConfig(primary_key="path_length_m")
+        ExitSelectionConfig(primary_key="accumulated_risk_cost")
     except ValueError:
         pass
     else:

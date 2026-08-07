@@ -19,6 +19,11 @@ from .path_simplifier import (
     SegmentSafetyResult, cells_touched_by_segment,
     extract_direction_change_points,
 )
+from .exit_switching import (
+    CostTrendDecision, ExitSwitchingConfig, RouteCostSample,
+    RouteCostTrendMonitor, current_direction_world, evaluate_path_cost,
+    is_opposite_direction,
+)
 
 __all__ = [
     "ReturnFailureReason", "ReturnPathPlan", "ReturnPathPlanner",
@@ -33,4 +38,7 @@ __all__ = [
     "PathValidationSettings", "SafePathSimplifier",
     "SegmentRejectionReason", "SegmentSafetyResult",
     "cells_touched_by_segment", "extract_direction_change_points",
+    "CostTrendDecision", "ExitSwitchingConfig", "RouteCostSample",
+    "RouteCostTrendMonitor", "current_direction_world", "evaluate_path_cost",
+    "is_opposite_direction",
 ]
