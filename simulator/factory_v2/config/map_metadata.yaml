@@ -1,0 +1,49 @@
+source_map: ../../fire_robot_rpi/inno_jazzy_ws/maps/fire_demo_20260729_182054.pgm
+source_map_yaml: ../../fire_robot_rpi/inno_jazzy_ws/maps/fire_demo_20260729_182054.yaml
+source_semantic_yaml: ../../fire_robot_rpi/inno_jazzy_ws/maps/fire_demo_20260729_182054_semantic_points.yaml
+source_no_go_zones: ../../fire_robot_rpi/maps/no_go_zones.yaml
+
+# These values are checked against the source YAML on every conversion.
+image_width_cells: 543
+image_height_cells: 453
+source_resolution_m: 0.05
+ros_origin: [-7.521, -17.712, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196
+
+# FDS uses the lower-left SLAM map corner as (0, 0).
+fds_resolution_m: 0.20
+fds_height_m: 3.0
+wall_height_m: 3.0  # Temporary: a 2-D SLAM map contains no height data.
+machinery_height_m: 1.2  # Temporary until measured machine heights are available.
+machinery_outline_dilation_cells: 1  # Capture the immediate SLAM outline only.
+unknown_policy: blocked
+downsample_policy: any_blocked
+
+# Remove small SLAM contour jitter before conversion. The resulting geometry
+# remains grid-aligned in FDS, so diagonal lines still have a one-cell stair step.
+wall_simplification:
+  enabled: true
+  contour_tolerance_m: 0.10
+  minimum_free_component_area_m2: 0.16
+  allow_derived_spike_cleanup: true
+  maximum_opened_coarse_cells: 100
+
+# EXIT poses are rendered as solid, differently colored wall markers at their
+# semantic coordinates. No corridor or OPEN boundary vent is generated.
+exit_markers:
+  thickness_m: 0.20
+  height_m: 3.00
+  EXIT1:
+    reference: semantic_center
+    slope: 1.7647
+    extent: until_slam_wall
+  EXIT2:
+    reference_fds: [22.2, 12.0]
+    slope: -0.5667
+    length_m: 1.20
+  EXIT3:
+    reference: semantic_center
+    slope: 1.7647
+    extent: until_slam_wall

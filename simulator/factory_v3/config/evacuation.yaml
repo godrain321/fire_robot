@@ -1,0 +1,178 @@
+fds_file: factory_v3.fds
+fds_result_chid: factory_v3_cat
+temperature_npz: processed/fds_temperature_3d_timeseries.npz
+
+planner:
+  grid_resolution_m: 0.20
+  inflation_radius_m: 0.45
+
+# TODO temporary: semantic INIT lies in the current inflated machinery mask.
+# This explicit nearby measured-free point is used instead; it is never moved
+# silently by the program.
+robot_start:
+  x: 13.0
+  y: 16.0
+  yaw_deg: -85.70
+
+# TODO temporary until a scenario-specific victim pose is supplied.
+# This free, reachable point is outside the robot's initial 10 m detection range,
+# so exit exploration begins before the victim can be detected.
+humans:
+  # Coordinates are factory_v3 FDS world metres.
+  - {id: victim_1, x: 22.0, y: 24.0, initial_status: undetected}
+dynamic_obstacles: []
+human_detection_range_m: 10.0
+victim_approach_distance_m: 1.0
+
+victim_following:
+  enabled: true
+  target_follow_distance_m: 1.5
+  max_follow_distance_m: 2.5
+  resume_follow_distance_m: 2.0
+  victim_speed_mps: 0.8
+  robot_pose_sample_distance_m: 0.2
+  follow_wait_timeout_s: 10.0
+  max_reprompt_count: 3
+  require_victim_at_exit_for_success: true
+
+mission:
+  # victim_reached_distance_m reuses victim_approach_distance_m above.
+  exit_reached_distance_m: 1.0
+  victim_wait_timeout_s: 10.0
+  max_replan_count: 5
+
+travel_history:
+  enabled: true
+  record_on_new_grid_cell: true
+  min_record_distance_m: 0.4
+  direction_change_threshold_deg: 35.0
+  max_points: 10000
+  record_during_return: false
+  simplify_reverse_path: true
+
+return_path:
+  enabled: true
+  validate_before_start: true
+  validate_during_return: true
+  lookahead_distance_m: 1.0
+  path_deviation_tolerance_m: 0.5
+  prefer_normal_planner: true
+  allow_history_fallback: true
+  # Older observations are uncertain; no time-decay model is assumed.
+  max_observation_age_s: 10.0
+
+# Temperature/CO block thresholds are inherited from PartialCostmapConfig
+# (60 degC and 1600 ppm); they are intentionally not duplicated here.
+exit_evaluation:
+  exit_neighborhood_radius_m: 1.0
+  approach_search_radius_m: 1.0
+  reject_blocked_exit: true
+  reject_dangerous_exit: true
+  reject_path_over_threshold: true
+  reject_invalid_cost: true
+  # Observation coverage confirms USABLE status but never rejects a route.
+  usable_confirmation_max_unknown_ratio: 0.5
+
+exit_selection:
+  prefer_confirmed_usable_exit: true
+  fallback_to_shortest_reachable_exit: true
+  primary_key: path_length_m
+  secondary_key: accumulated_risk_cost
+  final_tie_breaker: exit_id
+  float_tolerance: 1.0e-6
+
+# Exploration starts at robot_start and resumes at the robot's actual pose.
+# Entrance return is a separate completion policy and remains disabled until
+# an explicit entrance exit ID is configured.
+exploration:
+  enabled: true
+  start_after_evacuation: true
+  use_current_robot_pose_as_start: true
+  teleport_to_entrance_on_start: false
+  select_exit_by_astar_path_length: true
+  reselect_after_each_exit_check: true
+  resume_after_victim_evacuation: true
+  replan_from_current_pose_on_resume: true
+  return_to_entrance_when_complete: false
+  return_entrance_exit_id: null
+
+# These thresholds classify whether the robot has meaningful fire evidence.
+# They are intentionally higher than normal ambient readings and lower than
+# the hard movement blocks (60 C and 1600 ppm).
+hazard_knowledge:
+  temperature_elevated_c: 35.0
+  co_elevated_ppm: 100.0
+
+evacuation_route_selection:
+  enabled: true
+  # With no fire evidence, start toward the shortest reachable exit and use
+  # observations gathered in motion to decide whether to change exits.
+  no_fire_information_strategy: nearest_reachable_exit
+  fire_information_strategy: evaluate_all_exits
+  prefer_original_entrance_on_return_failure: true
+  evaluate_alternative_exits_on_entrance_failure: true
+
+exit_switching:
+  enabled: true
+  evaluation_window: 5
+  minimum_consecutive_increases: 3
+  minimum_increase_ratio: 0.10
+  minimum_absolute_increase: 0.25
+  minimum_direction_difference_deg: 90.0
+  switch_cooldown_sec: 10.0
+
+path_validation:
+  validate_on_costmap_revision: true
+  validate_on_dynamic_obstacle_event: true
+  validate_on_hazard_update: true
+  stop_before_replanning: true
+
+replanning:
+  enabled: true
+  max_replan_attempts: 5
+  cooldown_seconds: 0.5
+
+# The static planner map is already inflated by planner.inflation_radius_m.
+# Unknown cells remain traversable with PartialCostmap's explicit penalty;
+# exit evaluation independently enforces its stricter 0.5 route limit.
+path_simplification:
+  enabled: true
+  extract_direction_changes: true
+  enable_safe_shortcuts: true
+  line_traversal: supercover
+  preserve_start: true
+  preserve_goal: true
+  prevent_corner_cutting: true
+  use_inflated_costmap: true
+  fallback_to_original_path: true
+  robot_clearance_m: 0.0
+  risk:
+    compare_with_original_subpath: true
+    max_risk_increase_ratio: 1.05
+    max_unknown_ratio: 1.0
+    max_accumulated_cost: null
+    max_average_cost: null
+    max_cell_cost: null
+  validation:
+    reject_nan: true
+    reject_inf: true
+    reject_negative_cost: true
+    validate_temperature: true
+    validate_co: true
+    validate_dynamic_obstacles: true
+
+# Marker coordinates come from semantic_points.yaml. Approach points are
+# explicit free cells on the building-interior side of each solid marker.
+exits:
+  - id: EXIT1
+    initial_status: unknown
+    marker: {x: 9.3476007524, y: 18.2045725287}
+    approach: {x: 9.4, y: 17.4}
+  - id: EXIT2
+    initial_status: unknown
+    marker: {x: 21.0918754002, y: 9.4615073998}
+    approach: {x: 21.0, y: 9.8}
+  - id: EXIT3
+    initial_status: unknown
+    marker: {x: 19.0071266790, y: 26.1492717487}
+    approach: {x: 19.0, y: 25.4}

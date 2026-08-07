@@ -1,7 +1,38 @@
 # sensors/thermal_camera.py
 
 import numpy as np
+from dataclasses import dataclass
 from math import sin, cos, radians
+
+
+@dataclass(frozen=True)
+class ThermalRaySample:
+    """One FDS cell sampled by a simulated thermal ray."""
+
+    grid_position: tuple
+    world_position: tuple
+    distance: float
+    temperature: float
+
+
+@dataclass(frozen=True)
+class ThermalRayObservation:
+    """Optional localization metadata for one thermal-image pixel.
+
+    Real MLX90640 hardware does not provide depth. These positions are exposed
+    only by the simulator so stage-2 mapping can project ray observations into
+    a belief grid; callers that do not request metadata retain the old API.
+    """
+
+    row: int
+    col: int
+    pixel_temperature: float
+    ray_cells: tuple
+    hit_world_position: tuple | None
+    hit_grid_position: tuple | None
+    hit_distance: float | None
+    valid: bool
+    occluded: bool
 
 
 class ThermalCameraMLX90640:
@@ -215,6 +246,7 @@ class ThermalCameraMLX90640:
         z_resolution=0.25,
         obstacle_volume=None,
         camera_pitch=0.0,
+        return_observations=False,
     ):
         """
         3D MLX90640 열화상 카메라 모델.
@@ -249,7 +281,8 @@ class ThermalCameraMLX90640:
             음수면 아래를 봄
 
         return:
-            thermal_img, shape = (24, 32)
+            기본값은 thermal_img, shape = (24, 32).
+            return_observations=True이면 (thermal_img, ray_observations)를 반환.
         """
 
         if not isinstance(temperature_volume, np.ndarray):
@@ -259,6 +292,7 @@ class ThermalCameraMLX90640:
             obstacle_volume = np.array(obstacle_volume, dtype=bool)
 
         thermal_img = np.zeros((self.height, self.width), dtype=np.float32)
+        ray_observations = []
 
         # 로봇 중심이 아니라 전면 중앙에 카메라가 있다고 가정
         cam_x = robot_x + self.front_offset * cos(robot_theta)
@@ -289,7 +323,7 @@ class ThermalCameraMLX90640:
                 dir_y = cos(pitch) * sin(yaw)
                 dir_z = sin(pitch)
 
-                temp = self._cast_ray_3d(
+                cast_result = self._cast_ray_3d(
                     temperature_volume=temperature_volume,
                     obstacle_volume=obstacle_volume,
                     cam_x=cam_x,
@@ -300,10 +334,51 @@ class ThermalCameraMLX90640:
                     dir_z=dir_z,
                     xy_resolution=xy_resolution,
                     z_resolution=z_resolution,
+                    return_trace=return_observations,
                 )
 
-                thermal_img[row, col] = self._apply_sensor_noise(temp)
+                if return_observations:
+                    temp, samples, selected_index, occluded = cast_result
+                else:
+                    temp = cast_result
+                measured_temp = self._apply_sensor_noise(temp)
+                thermal_img[row, col] = measured_temp
 
+                if return_observations:
+                    measured_samples = []
+                    for index, sample in enumerate(samples):
+                        sample_temperature = (
+                            measured_temp if index == selected_index
+                            else self._apply_sensor_noise(sample.temperature)
+                        )
+                        measured_samples.append(ThermalRaySample(
+                            grid_position=sample.grid_position,
+                            world_position=sample.world_position,
+                            distance=sample.distance,
+                            temperature=sample_temperature,
+                        ))
+                    selected = (
+                        measured_samples[selected_index]
+                        if selected_index is not None else None
+                    )
+                    ray_observations.append(ThermalRayObservation(
+                        row=row,
+                        col=col,
+                        pixel_temperature=measured_temp,
+                        ray_cells=tuple(measured_samples),
+                        hit_world_position=(
+                            selected.world_position if selected is not None else None
+                        ),
+                        hit_grid_position=(
+                            selected.grid_position if selected is not None else None
+                        ),
+                        hit_distance=(selected.distance if selected is not None else None),
+                        valid=selected is not None,
+                        occluded=occluded,
+                    ))
+
+        if return_observations:
+            return thermal_img, tuple(ray_observations)
         return thermal_img
 
     def _cast_ray_3d(
@@ -318,6 +393,7 @@ class ThermalCameraMLX90640:
         dir_z,
         xy_resolution,
         z_resolution,
+        return_trace=False,
     ):
         """
         3D 공간에서 하나의 ray를 쏜다.
@@ -327,7 +403,8 @@ class ThermalCameraMLX90640:
         ray_step = min(xy_resolution, z_resolution) * 0.5
         distances = np.arange(self.min_range, self.max_range + ray_step, ray_step)
 
-        sampled_temps = []
+        samples = []
+        occluded = False
 
         for d in distances:
             x = cam_x + d * dir_x
@@ -346,20 +423,33 @@ class ThermalCameraMLX90640:
                 break
 
             temp = float(temperature_volume[iz, iy, ix])
-            sampled_temps.append(temp)
+            samples.append(ThermalRaySample(
+                grid_position=(ix, iy, iz),
+                world_position=(x, y, z),
+                distance=float(d),
+                temperature=temp,
+            ))
 
             if obstacle_volume is not None:
                 if self._in_bounds_3d(obstacle_volume, ix, iy, iz):
                     if obstacle_volume[iz, iy, ix]:
+                        occluded = True
                         break
 
-        if len(sampled_temps) == 0:
+        if len(samples) == 0:
+            if return_trace:
+                return self.ambient_temp, [], None, occluded
             return self.ambient_temp
 
         if self.measurement_mode == "last":
-            return sampled_temps[-1]
+            selected_index = len(samples) - 1
+        else:
+            selected_index = int(np.argmax([sample.temperature for sample in samples]))
 
-        return max(sampled_temps)
+        selected_temp = samples[selected_index].temperature
+        if return_trace:
+            return selected_temp, samples, selected_index, occluded
+        return selected_temp
 
     def _world_to_grid_3d(
         self,

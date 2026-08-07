@@ -1,0 +1,13 @@
+csv_temp3d/*.csv
+processed/*.npz
+factory_v3_cat*
+*.s3d
+*.s3d.sz
+*.sf
+*.sf.bnd
+*.bf
+*.bf.bnd
+*_cpu.csv
+*_hrr.csv
+*_steps.csv
+

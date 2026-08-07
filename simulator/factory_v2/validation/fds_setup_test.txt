@@ -1,0 +1,27 @@
+FDS setup-only validation
+Date: 2026-08-01 (Asia/Seoul)
+Executable: /home/park/FDS/FDS6/bin/fds_openmp
+Version: FDS-6.11.0-0-g369a20b-release
+Transport override used on this host: I_MPI_FABRICS=shm
+Input: temporary T_END=0 factory_v2 plus generated/obstacles.inc, generated/exits.inc,
+       and generated/scenario.inc through CATF
+Expanded CHID: factory_v2_right_wall_fire_setup_cat
+Mesh cells reported by FDS: 232560
+Merged OBST records in final obstacles.inc: 643
+Machinery OBST records (SLAM footprint, height 1.2 m): 16
+Generated sloped solid EXIT OBST records in final exits.inc: 24
+Generated OPEN VENT records in final exits.inc: 0
+Generated oil-fire VENT records in final scenario.inc: 22
+Generated cardboard-fire VENT records in final scenario.inc: 13
+Result: PASS - STOP: Set-up only (CHID: factory_v2_right_wall_fire_setup_cat)
+Errors/warnings in final setup output: none
+
+The test ran from a temporary copy so FDS products were not mixed with source files.
+Smokeview 6.11.0 is installed, and the setup run generated factory_v2_cat.smv.
+No graphical Smokeview inspection was possible because this session has no display/Xvfb.
+
+Runtime note:
+- The original SIGSEGV was isolated to stack exhaustion in mass_mp_density_.
+- With ulimit -s unlimited and OMP_STACKSIZE=1G, the final oil-fire case completed
+  a T_END=0.2 short run successfully using four OpenMP threads.
+- The full T_END=600 run remains unverified on this host.

@@ -1,0 +1,389 @@
+{
+  "all_obstacles_inside_mesh": true,
+  "axis_checks": {
+    "fds_x_y_match_ros_x_y_without_axis_swap": true,
+    "lower_left_ros": [
+      -7.521,
+      -17.712
+    ],
+    "pgm_col_increases_with_ros_x": true,
+    "pgm_row_decreases_with_ros_y": true,
+    "upper_right_ros": [
+      19.629,
+      4.938000000000002
+    ]
+  },
+  "connectivity": {
+    "EXIT1": {
+      "connected": true,
+      "minimum_path_clearance_m": 0.2,
+      "path_grid_nodes": 18,
+      "path_length_m": 3.648528137423858
+    },
+    "EXIT2": {
+      "connected": true,
+      "minimum_path_clearance_m": 0.2,
+      "path_grid_nodes": 47,
+      "path_length_m": 10.939696961966991
+    },
+    "EXIT3": {
+      "connected": true,
+      "minimum_path_clearance_m": 0.2,
+      "path_grid_nodes": 66,
+      "path_length_m": 16.06518036156089
+    }
+  },
+  "deterministic_exit_hash_ok": true,
+  "deterministic_obstacle_hash_ok": true,
+  "deterministic_scenario_hash_ok": true,
+  "domain_border_blocked_fraction": 1.0,
+  "downsampling": {
+    "free_area_lost_m2_upper_bound": 79.88000000000001,
+    "free_cells_lost_by_conservative_rule": 1997,
+    "policy": "any_blocked",
+    "source_free_coarse_cells_touched": 6491
+  },
+  "errors": [],
+  "exit_markers": {
+    "EXIT1": {
+      "cell_count": 21,
+      "height_m": 3.0,
+      "open_boundary_vent": false,
+      "reference_fds": [
+        9.341228576660155,
+        5.433134185791016
+      ],
+      "slope": 1.7647,
+      "solid_marker": true,
+      "touches_slam_wall_both_ends": true,
+      "xb_xy": [
+        8.6,
+        10.200000000000001,
+        4.0,
+        6.800000000000001
+      ]
+    },
+    "EXIT2": {
+      "cell_count": 8,
+      "height_m": 3.0,
+      "open_boundary_vent": false,
+      "reference_fds": [
+        22.2,
+        12.0
+      ],
+      "slope": -0.5667,
+      "solid_marker": true,
+      "touches_slam_wall_both_ends": null,
+      "xb_xy": [
+        21.6,
+        22.8,
+        11.600000000000001,
+        12.4
+      ]
+    },
+    "EXIT3": {
+      "cell_count": 11,
+      "height_m": 3.0,
+      "open_boundary_vent": false,
+      "reference_fds": [
+        7.226145835876465,
+        17.7599793548584
+      ],
+      "slope": 1.7647,
+      "solid_marker": true,
+      "touches_slam_wall_both_ends": true,
+      "xb_xy": [
+        6.800000000000001,
+        7.800000000000001,
+        17.2,
+        18.6
+      ]
+    }
+  },
+  "inaccessible_area_preservation": {
+    "derived_cleanup_open_coarse_cells": 46,
+    "maximum_allowed_cleanup_cells": 100,
+    "no_go_cleanup_allowed": false,
+    "passed": true,
+    "solid_exit_markers_reported_separately": true,
+    "source_map_modified": false
+  },
+  "industrial_machinery_unknown_components": {
+    "INDUSTRIAL_MACHINERY_01": {
+      "bbox_size_m": [
+        0.6000000000000001,
+        0.4
+      ],
+      "cell_count": 50,
+      "fds_bbox": [
+        19.950000000000003,
+        20.55,
+        4.05,
+        4.45
+      ]
+    },
+    "INDUSTRIAL_MACHINERY_02": {
+      "bbox_size_m": [
+        0.55,
+        0.4
+      ],
+      "cell_count": 48,
+      "fds_bbox": [
+        16.900000000000002,
+        17.45,
+        5.550000000000001,
+        5.95
+      ]
+    },
+    "INDUSTRIAL_MACHINERY_03": {
+      "bbox_size_m": [
+        1.0,
+        1.4000000000000001
+      ],
+      "cell_count": 268,
+      "fds_bbox": [
+        20.05,
+        21.05,
+        12.850000000000001,
+        14.25
+      ]
+    },
+    "INDUSTRIAL_MACHINERY_04": {
+      "bbox_size_m": [
+        0.9,
+        1.2000000000000002
+      ],
+      "cell_count": 224,
+      "fds_bbox": [
+        16.6,
+        17.5,
+        14.55,
+        15.75
+      ]
+    }
+  },
+  "no_go_zone_preservation": {
+    "coarse_wall_cells": 1154,
+    "passed": true,
+    "source_polygon_cells": 16830,
+    "unexpected_free_cells": 0,
+    "zone_count": 1,
+    "zone_names": [
+      "industrial_machinery_no_go_1"
+    ]
+  },
+  "scenario": {
+    "cardboard_boxes": {
+      "enabled": true,
+      "estimated_full_spread_time_s": 425.7346591481601,
+      "excludes_blocked_geometry": true,
+      "extends_to_upper_slam_wall": true,
+      "follows_right_no_go_wall": true,
+      "hrrpua_kw_m2": 300.0,
+      "maximum_spread_distance_m": 3.405877273185281,
+      "nearest_wall_goal_grid": [
+        83,
+        78
+      ],
+      "origin_fds": [
+        18.900000000000002,
+        14.3
+      ],
+      "overlaps_oil_surface": false,
+      "path_cells": 47,
+      "reaches_right_no_go_wall": true,
+      "reaches_slam_wall": true,
+      "rectangles": 13,
+      "right_no_go_goal_grid": [
+        105,
+        75
+      ],
+      "spread_rate_m_s": 0.008,
+      "surface_area_m2": 5.520000000000001,
+      "surface_cells": 138,
+      "target_machinery": "INDUSTRIAL_MACHINERY_04"
+    },
+    "distance_reference_to_machinery_m": 3.398382758016647,
+    "estimated_full_spread_time_s": 113.5292424395093,
+    "fire_enabled": true,
+    "hrrpua_kw_m2": 1000.0,
+    "id": "MACHINERY_OIL_FIRE",
+    "ignition_center_fds": [
+      19.900000000000002,
+      13.700000000000001
+    ],
+    "ignition_distance_to_machinery_m": 0.5008324129743578,
+    "maximum_spread_distance_m": 3.405877273185279,
+    "oil_spill_area_m2": 6.280000000000001,
+    "oil_spill_bbox": [
+      18.8,
+      22.8,
+      11.4,
+      15.0
+    ],
+    "oil_spill_cells": 157,
+    "oil_spill_excludes_blocked_and_no_go": true,
+    "oil_spill_radius_m": 1.2,
+    "oil_spill_rectangles": 22,
+    "oil_spread_rate_m_s": 0.03,
+    "selected_machinery": "INDUSTRIAL_MACHINERY_03",
+    "selected_machinery_center_fds": [
+      20.383194061279298,
+      13.568255531311035
+    ],
+    "selection_reference_fds": [
+      23.0,
+      11.4
+    ],
+    "target_exit_approach_covered_by_oil": true,
+    "target_exit_fire_approach_grid": [
+      110,
+      59
+    ],
+    "target_exit_semantic_grid": [
+      110,
+      60
+    ],
+    "wall_follow_path_cells": 31,
+    "wall_follow_target_exit": "EXIT2"
+  },
+  "semantic_points": {
+    "EXIT1": {
+      "approach_grid_xy": [
+        51,
+        31
+      ],
+      "clearance_to_coarse_blocked_m": 0.2,
+      "coarse_free": false,
+      "coarse_grid_xy": [
+        46,
+        27
+      ],
+      "coordinate_round_trip_ok": true,
+      "fds_xy": [
+        9.341228576660155,
+        5.433134185791016
+      ],
+      "marker_grid_xy": [
+        46,
+        27
+      ],
+      "marker_reference_fds": [
+        9.341228576660155,
+        5.433134185791016
+      ],
+      "solid_exit_marker": true,
+      "source_free": true,
+      "source_pixel_row_col": [
+        344,
+        186
+      ],
+      "source_pixel_value": 254
+    },
+    "EXIT2": {
+      "approach_grid_xy": [
+        107,
+        60
+      ],
+      "clearance_to_coarse_blocked_m": 0.2,
+      "coarse_free": true,
+      "coarse_grid_xy": [
+        113,
+        56
+      ],
+      "coordinate_round_trip_ok": true,
+      "fds_xy": [
+        22.754551025390622,
+        11.302713024139404
+      ],
+      "marker_grid_xy": [
+        110,
+        60
+      ],
+      "marker_reference_fds": [
+        22.2,
+        12.0
+      ],
+      "solid_exit_marker": true,
+      "source_free": true,
+      "source_pixel_row_col": [
+        226,
+        455
+      ],
+      "source_pixel_value": 254
+    },
+    "EXIT3": {
+      "approach_grid_xy": [
+        39,
+        91
+      ],
+      "clearance_to_coarse_blocked_m": 0.2,
+      "coarse_free": false,
+      "coarse_grid_xy": [
+        36,
+        88
+      ],
+      "coordinate_round_trip_ok": true,
+      "fds_xy": [
+        7.226145835876465,
+        17.7599793548584
+      ],
+      "marker_grid_xy": [
+        36,
+        88
+      ],
+      "marker_reference_fds": [
+        7.226145835876465,
+        17.7599793548584
+      ],
+      "solid_exit_marker": true,
+      "source_free": true,
+      "source_pixel_row_col": [
+        97,
+        144
+      ],
+      "source_pixel_value": 254
+    },
+    "INIT": {
+      "approach_grid_xy": [
+        61,
+        39
+      ],
+      "clearance_to_coarse_blocked_m": 0.2,
+      "coarse_free": true,
+      "coarse_grid_xy": [
+        61,
+        39
+      ],
+      "coordinate_round_trip_ok": true,
+      "fds_xy": [
+        12.33879909133911,
+        7.857790100097656
+      ],
+      "marker_grid_xy": [
+        61,
+        39
+      ],
+      "marker_reference_fds": [
+        12.33879909133911,
+        7.857790100097656
+      ],
+      "solid_exit_marker": false,
+      "source_free": true,
+      "source_pixel_row_col": [
+        295,
+        246
+      ],
+      "source_pixel_value": 254
+    }
+  },
+  "source_semantic_yaml_matches_config": true,
+  "status": "PASS",
+  "vertical_geometry": {
+    "ceiling_height_m": 3.0,
+    "ceiling_matches_walls": true,
+    "machinery_height_m": 1.2,
+    "machinery_is_lower_than_walls": true,
+    "wall_height_m": 3.0
+  }
+}

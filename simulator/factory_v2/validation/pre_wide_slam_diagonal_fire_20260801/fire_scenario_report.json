@@ -1,0 +1,33 @@
+{
+  "status": "PASS",
+  "protected_geometry_unchanged": true,
+  "protected_hashes": {
+    "obstacles": "7fe0d6f96320efb7c6af7452389139dd221436bb7f5126427fa52d62126caab6",
+    "exits": "6c1df3d09e30d71f974fd2b2b69dd240f3c2dcb32df16ad75a993c7fb7a679c5"
+  },
+  "wall_obstacle_ids": [
+    "NO_GO_ZONE_0050",
+    "NO_GO_ZONE_0051",
+    "NO_GO_ZONE_0052",
+    "NO_GO_ZONE_0053",
+    "NO_GO_ZONE_0054",
+    "NO_GO_ZONE_0055",
+    "NO_GO_ZONE_0056",
+    "NO_GO_ZONE_0057",
+    "NO_GO_ZONE_0058",
+    "SLAM_OCCUPIED_0211",
+    "SLAM_OCCUPIED_0214",
+    "SLAM_OCCUPIED_0217",
+    "SLAM_OCCUPIED_0219",
+    "SLAM_OCCUPIED_0222",
+    "SLAM_OCCUPIED_0225",
+    "SLAM_OCCUPIED_0228"
+  ],
+  "target_machinery": "INDUSTRIAL_MACHINERY_04",
+  "surface_cells": 122,
+  "surface_area_m2": 4.880000000000001,
+  "rectangles": 16,
+  "spread_rate_m_s": 0.008,
+  "hrrpua_kw_m2": 300.0,
+  "estimated_full_spread_time_s": 673.145600891813
+}

@@ -1,0 +1,11 @@
+FDS version: 6.11.0
+Input: temporary copy of factory_v3.fds with T_END=2
+Command environment: I_MPI_FABRICS=shm OMP_STACKSIZE=1G OMP_NUM_THREADS=4
+Stack limit: unlimited
+Result: PASS
+Final message: STOP: FDS completed successfully (CHID: factory_v3_cat)
+Final simulation time: 2.00000 s
+
+Without an unlimited process stack and OMP_STACKSIZE=1G, the installed
+fds_openmp binary reproduced the known first-timestep SIGSEGV. This is an
+execution-environment stack issue, not an FDS input parse error.
