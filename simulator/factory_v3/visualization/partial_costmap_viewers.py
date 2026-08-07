@@ -6,9 +6,90 @@ produce sensor observations, costs, paths, or other simulation inputs.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import math
 
 import numpy as np
+
+from world.entities import ExitStatus
+
+
+def _rgb(value, name):
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        raise ValueError(f"{name} must contain three RGB values")
+    result = tuple(int(item) for item in value)
+    if any(item < 0 or item > 255 for item in result):
+        raise ValueError(f"{name} RGB values must be in [0,255]")
+    return result
+
+
+@dataclass(frozen=True)
+class PerceptionMapDisplayConfig:
+    unknown_color: tuple[int, int, int] = (110, 110, 110)
+    safe_color: tuple[int, int, int] = (40, 170, 70)
+    caution_color: tuple[int, int, int] = (230, 190, 40)
+    danger_color: tuple[int, int, int] = (210, 50, 50)
+    blocked_color: tuple[int, int, int] = (25, 25, 25)
+    dynamic_obstacle_color: tuple[int, int, int] = (120, 40, 150)
+    safe_cost_max: float = 0.25
+    caution_cost_max: float = 0.60
+    danger_cost_max: float = 0.99
+
+    @classmethod
+    def from_mapping(cls, values):
+        values = dict(values or {})
+        unknown = set(values) - set(cls.__dataclass_fields__)
+        if unknown:
+            raise ValueError(f"unknown perception_map_display settings: {sorted(unknown)}")
+        for name in (
+            "unknown_color", "safe_color", "caution_color", "danger_color",
+            "blocked_color", "dynamic_obstacle_color",
+        ):
+            if name in values:
+                values[name] = _rgb(values[name], name)
+        return cls(**values)
+
+    def __post_init__(self):
+        for name in (
+            "unknown_color", "safe_color", "caution_color", "danger_color",
+            "blocked_color", "dynamic_obstacle_color",
+        ):
+            object.__setattr__(self, name, _rgb(getattr(self, name), name))
+        if not 0 <= self.safe_cost_max < self.caution_cost_max < self.danger_cost_max <= 1:
+            raise ValueError("display cost thresholds must increase within [0,1]")
+
+    def color_for(self, *, observed, blocked, normalized_cost):
+        if blocked:
+            return self.blocked_color
+        if not observed:
+            return self.unknown_color
+        if normalized_cost <= self.safe_cost_max:
+            return self.safe_color
+        if normalized_cost <= self.caution_cost_max:
+            return self.caution_color
+        return self.danger_color
+
+
+@dataclass(frozen=True)
+class MapOverlayConfig:
+    show_dynamic_obstacles: bool = True
+    show_fire_candidates: bool = True
+    show_estimated_fire_center: bool = True
+    show_detected_humans: bool = True
+    show_exit_states: bool = True
+    show_current_path: bool = True
+
+    @classmethod
+    def from_mapping(cls, values):
+        values = dict(values or {})
+        unknown = set(values) - set(cls.__dataclass_fields__)
+        if unknown:
+            raise ValueError(f"unknown map_overlays settings: {sorted(unknown)}")
+        return cls(**values)
+
+    def __post_init__(self):
+        if any(type(getattr(self, name)) is not bool for name in self.__dataclass_fields__):
+            raise TypeError("map overlay settings must be boolean")
 
 
 class WorldTransform:
@@ -59,7 +140,8 @@ class PygameSimulationViewer:
 
     def __init__(
         self, grid_map, config, title="Partial Costmap Evacuation",
-        *, display_static_obstacle_map=None,
+        *, display_static_obstacle_map=None, perception_display_config=None,
+        overlay_config=None,
     ) -> None:
         import pygame
 
@@ -86,6 +168,10 @@ class PygameSimulationViewer:
             )
         self.display_static_obstacle_map = display_static.copy()
         self.config = config
+        self.perception_display_config = (
+            perception_display_config or PerceptionMapDisplayConfig()
+        )
+        self.overlay_config = overlay_config or MapOverlayConfig()
         self.running = True
         self.paused = False
 
@@ -109,22 +195,25 @@ class PygameSimulationViewer:
 
     def _draw_belief_cells(self, belief):
         pygame = self.pygame
-        overlay = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
-        finite = belief.final_cost_map[np.isfinite(belief.final_cost_map)]
-        cost_max = max(float(finite.max()) if finite.size else 1.0, 1.0)
+        cfg = self.perception_display_config
+        finite = belief.final_cost_map[
+            np.isfinite(belief.final_cost_map) & ~belief.blocked_mask
+        ]
+        base = float(self.config.base_cost)
+        cost_max = max(float(finite.max()) if finite.size else base + 1.0, base + 1e-9)
         for gy in range(self.grid_map.height):
             for gx in range(self.grid_map.width):
                 rect = self.transform.grid_rect(gx, gy)
-                base = self.OBSERVED if belief.observed_mask[gy, gx] else self.UNKNOWN
-                pygame.draw.rect(self.screen, base, rect)
-                if np.isfinite(belief.final_cost_map[gy, gx]):
-                    # Display-only normalization; the underlying cost is untouched.
-                    pygame.draw.rect(
-                        overlay,
-                        self._risk_color(belief.final_cost_map[gy, gx], cost_max),
-                        rect,
-                    )
-        self.screen.blit(overlay, (0, 0))
+                value = belief.final_cost_map[gy, gx]
+                normalized = 1.0 if not np.isfinite(value) else float(np.clip(
+                    (value - base) / max(cost_max - base, 1e-9), 0.0, 1.0
+                ))
+                color = cfg.color_for(
+                    observed=bool(belief.observed_mask[gy, gx]),
+                    blocked=bool(belief.blocked_mask[gy, gx]),
+                    normalized_cost=normalized,
+                )
+                pygame.draw.rect(self.screen, color, rect)
 
     def _draw_blocked(self, belief):
         pygame = self.pygame
@@ -138,6 +227,15 @@ class PygameSimulationViewer:
                     and not belief.static_obstacle_map[gy, gx]
                 ):
                     pygame.draw.rect(self.screen, self.BLOCKED, rect)
+                if (
+                    self.overlay_config.show_dynamic_obstacles
+                    and belief.dynamic_inflated_obstacle_map[gy, gx]
+                ):
+                    pygame.draw.rect(
+                        self.screen,
+                        self.perception_display_config.dynamic_obstacle_color,
+                        rect, 2,
+                    )
 
     def _draw_sensor_area(self, state, camera, newly_observed_cells, gas_radius):
         pygame = self.pygame
@@ -219,8 +317,10 @@ class PygameSimulationViewer:
         pygame.draw.line(self.screen, (255, 255, 255), robot_p, heading, 4)
         detected = set(detected_ids)
         for human in humans:
+            if human["id"] not in detected or not self.overlay_config.show_detected_humans:
+                continue
             point = self.transform.world_to_screen(human["x"], human["y"])
-            color = (255, 100, 100) if human["id"] in detected else (170, 80, 80)
+            color = (255, 100, 100)
             pygame.draw.circle(self.screen, color, point, 9)
             pygame.draw.circle(self.screen, (255, 255, 255), point, 9, 2)
         evaluations = {item.exit_id: item for item in exit_evaluations}
@@ -313,14 +413,26 @@ class PygameSimulationViewer:
         newly_observed_cells, snapshot, humans=(), exits=(), detected_ids=(),
         travel_history=(), return_path=(), blocked_return_grid=None,
         exit_evaluations=(), selected_exit_id=None, path_simplification=None,
-        victim_following=None, fire_localization=None,
+        victim_following=None, fire_localization=None, exit_states=None,
     ) -> None:
         snapshot = dict(snapshot)
         snapshot["observed_ratio"] = float(belief.observed_mask.mean() * 100.0)
         self.screen.fill(self.BACKGROUND)
         self._draw_belief_cells(belief)
         self._draw_blocked(belief)
+        fire_visible = (
+            fire_localization is not None
+            and fire_localization.state.name in {
+                "POSSIBLE_FIRE", "LIKELY_FIRE", "CONFIRMED_FIRE_REGION"
+            }
+        )
         if fire_localization is not None:
+            snapshot["fire_estimate"] = (
+                f"{fire_localization.state.name} "
+                f"p={fire_localization.highest_probability:.3f}, "
+                f"obs={fire_localization.valid_observation_count}"
+            )
+        if fire_visible and self.overlay_config.show_fire_candidates:
             for col, row in fire_localization.candidate_cells_grid:
                 overlay = self.pygame.Surface(
                     self.transform.grid_rect(col, row).size,
@@ -328,20 +440,25 @@ class PygameSimulationViewer:
                 )
                 overlay.fill((255, 70, 20, 75))
                 self.screen.blit(overlay, self.transform.grid_rect(col, row).topleft)
-            if fire_localization.highest_probability_world is not None:
+            if (
+                self.overlay_config.show_estimated_fire_center
+                and fire_localization.state.name in {
+                    "LIKELY_FIRE", "CONFIRMED_FIRE_REGION"
+                }
+                and fire_localization.weighted_center_world is not None
+            ):
                 peak = self.transform.world_to_screen(
-                    *fire_localization.highest_probability_world
+                    *fire_localization.weighted_center_world
                 )
-                self.pygame.draw.circle(self.screen, (255, 30, 20), peak, 9, 3)
-            snapshot["fire_estimate"] = (
-                f"{fire_localization.state.name} "
-                f"p={fire_localization.highest_probability:.3f}, "
-                f"obs={fire_localization.valid_observation_count}"
-            )
+                self.pygame.draw.line(self.screen, (255, 30, 20),
+                                      (peak[0] - 9, peak[1]), (peak[0] + 9, peak[1]), 3)
+                self.pygame.draw.line(self.screen, (255, 30, 20),
+                                      (peak[0], peak[1] - 9), (peak[0], peak[1] + 9), 3)
         self._draw_sensor_area(
             state, camera, newly_observed_cells, self.config.gas_update_radius
         )
-        self._draw_paths(follower, trajectory)
+        if self.overlay_config.show_current_path:
+            self._draw_paths(follower, trajectory)
         if path_simplification is not None:
             original = [
                 self.transform.world_to_screen(*self.grid_map.grid_to_world(*cell))
@@ -407,6 +524,23 @@ class PygameSimulationViewer:
             state, start, goal, humans, exits, detected_ids,
             exit_evaluations, selected_exit_id,
         )
+        if self.overlay_config.show_exit_states and exit_states:
+            colors = {
+                ExitStatus.UNKNOWN: (150, 150, 150),
+                ExitStatus.USABLE: (40, 220, 230),
+                ExitStatus.BLOCKED: (10, 10, 10),
+                ExitStatus.DANGEROUS: (240, 45, 45),
+            }
+            for exit_item in exits:
+                state_value = exit_states.get(exit_item["id"], ExitStatus.UNKNOWN)
+                approach = exit_item["approach"]
+                point = self.transform.world_to_screen(approach["x"], approach["y"])
+                self.pygame.draw.circle(self.screen, colors[state_value], point, 12, 3)
+                if state_value is ExitStatus.BLOCKED:
+                    self.pygame.draw.line(self.screen, (255, 255, 255),
+                                          (point[0]-7, point[1]-7), (point[0]+7, point[1]+7), 3)
+                    self.pygame.draw.line(self.screen, (255, 255, 255),
+                                          (point[0]-7, point[1]+7), (point[0]+7, point[1]-7), 3)
         self.pygame.draw.rect(self.screen, (210, 210, 210), self.map_rect, 2)
         self._draw_mini_layer(
             belief.temperature_cost_map,

@@ -64,6 +64,10 @@ class WorldState:
             raise ValueError(f"static obstacle shape={static.shape}, expected={expected}")
         self.static_obstacle_map = static.copy()
         self.static_obstacle_map.setflags(write=False)
+        # Defaults to the planner layer; the simulator may replace this with
+        # its non-inflated SLAM occupancy through the explicit setter below.
+        self.known_occupancy_map = static.copy()
+        self.known_occupancy_map.setflags(write=False)
         self.dynamic_obstacles: dict[str, DynamicObstacle] = {}
         self.exits: dict[str, Exit] = {}
         self.victims: dict[str, Victim] = {}
@@ -93,6 +97,8 @@ class WorldState:
         self.mission_entry_position_world: tuple[float, float] | None = None
         self.hazard_knowledge_decision = None
         self.fire_localization_result = None
+        self.latest_exit_blockage_results: dict[str, Any] = {}
+        self.last_perception_replan_reason: str | None = None
         self.active_route_decision = None
         self.active_route_valid = False
         self.active_route_invalid_reason: str | None = None
@@ -453,6 +459,13 @@ class WorldState:
             raise ValueError(f"{label} {(x, y)} is inside a static obstacle at {(col, row)}")
         return col, row
 
+    def set_known_occupancy_map(self, occupancy_map) -> None:
+        values = np.asarray(occupancy_map, dtype=bool)
+        if values.shape != self.static_obstacle_map.shape:
+            raise ValueError("known occupancy map shape mismatch")
+        self.known_occupancy_map = values.copy()
+        self.known_occupancy_map.setflags(write=False)
+
     def add_exit(self, exit_item: Exit) -> None:
         if exit_item.exit_id in self.exits:
             raise ValueError(f"duplicate exit_id: {exit_item.exit_id}")
@@ -469,9 +482,18 @@ class WorldState:
             raise KeyError(f"unknown exit_id: {exit_id}") from exc
 
     def update_exit_status(self, exit_id: str, status: ExitStatus, **context) -> None:
-        self.get_exit(exit_id).update_status(status, sim_time=context.pop("sim_time", self.simulation_time), **context)
+        exit_item = self.get_exit(exit_id)
+        previous = exit_item.status
+        exit_item.update_status(status, sim_time=context.pop("sim_time", self.simulation_time), **context)
+        if status is not previous:
+            self.environment_revision += 1
         if self.current_target_exit_id == exit_id:
             self.current_target_is_usable = status is ExitStatus.USABLE
+
+    def record_exit_blockage_result(self, result) -> None:
+        if result.exit_id not in self.exits:
+            raise KeyError(f"unknown exit_id: {result.exit_id}")
+        self.latest_exit_blockage_results[result.exit_id] = result
 
     def add_victim(self, victim: Victim) -> None:
         if victim.victim_id in self.victims:
@@ -566,7 +588,14 @@ class WorldState:
         )
 
     def _validate_dynamic_obstacle(self, obstacle: DynamicObstacle) -> None:
-        self.validate_position(obstacle.position_world, label=f"dynamic obstacle {obstacle.obstacle_id}")
+        col, row = self.validate_position(
+            obstacle.position_world, require_free=False,
+            label=f"dynamic obstacle {obstacle.obstacle_id}",
+        )
+        if self.known_occupancy_map[row, col]:
+            raise ValueError(
+                f"dynamic obstacle {obstacle.obstacle_id} overlaps known static occupancy"
+            )
         x1, x2, y1, y2 = self._obstacle_extent(obstacle)
         for point in ((x1, y1), (x2, y2)):
             if not self.map_metadata.is_world_position_in_bounds(*point):
@@ -595,6 +624,10 @@ class WorldState:
         snapshot = (
             obstacle.position_world, obstacle.status, obstacle.confidence,
             obstacle.first_seen_at, obstacle.last_seen_at,
+            obstacle.observation_count,
+        )
+        semantic_before = (
+            obstacle.position_world, obstacle.status, obstacle.confidence,
         )
         obstacle.update(sim_time=changes.pop("sim_time", self.simulation_time), **changes)
         try:
@@ -603,9 +636,14 @@ class WorldState:
             (
                 obstacle.position_world, obstacle.status, obstacle.confidence,
                 obstacle.first_seen_at, obstacle.last_seen_at,
+                obstacle.observation_count,
             ) = snapshot
             raise
-        self.environment_revision += 1
+        semantic_after = (
+            obstacle.position_world, obstacle.status, obstacle.confidence,
+        )
+        if semantic_after != semantic_before:
+            self.environment_revision += 1
 
     def clear_dynamic_obstacle(self, obstacle_id: str, *, sim_time: float | None = None) -> None:
         self.update_dynamic_obstacle(
@@ -686,6 +724,8 @@ class WorldState:
             "mission_entry_position_world": self.mission_entry_position_world,
             "hazard_knowledge_decision": self.hazard_knowledge_decision,
             "fire_localization_result": self.fire_localization_result,
+            "latest_exit_blockage_results": self.latest_exit_blockage_results,
+            "last_perception_replan_reason": self.last_perception_replan_reason,
             "active_route_decision": self.active_route_decision,
             "active_route_valid": self.active_route_valid,
             "active_route_invalid_reason": self.active_route_invalid_reason,
@@ -740,6 +780,7 @@ class WorldState:
             ),
             "victim_following_events": self.victim_following_events,
             "static_obstacle_map": self.static_obstacle_map,
+            "known_occupancy_map": self.known_occupancy_map,
             "dynamic_obstacles": self.dynamic_obstacles,
             "exits": self.exits,
             "victims": self.victims,

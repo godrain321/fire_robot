@@ -18,6 +18,9 @@ from mapping.fire_costmap import (
 )
 from mapping.grid_map import GridMap
 from mapping.fire_localization import FireLocalizationConfig, FireLocalizer
+from mapping.dynamic_obstacle_mapping import (
+    DynamicObstacleMapper, DynamicObstacleMappingConfig,
+)
 from mapping.partial_costmap import (
     PartialCostmapConfig,
     PartialFireCostmap,
@@ -43,6 +46,7 @@ from navigation.victim_following import (
     FollowState, VictimFollowingConfig, VictimFollowingController,
     evacuation_success_ready,
 )
+from navigation.exit_blockage import ExitBlockageConfig, ExitBlockageEvaluator
 from planner.a_star import weighted_a_star_with_escape
 from planner.evacuation_planner import EvacuationPlanner, ExitSelectionConfig
 from planner.exit_evaluator import (
@@ -53,7 +57,7 @@ from sensors.mq135_sensor import MQ135Config, MQ135Sensor
 from sensors.thermal_camera import ThermalCameraMLX90640
 from simulation.ground_truth import FDSGroundTruthEnvironment
 from visualization.partial_costmap_viewers import (
-    MatplotlibThermalViewer,
+    MapOverlayConfig, MatplotlibThermalViewer, PerceptionMapDisplayConfig,
     PygameSimulationViewer,
     show_debug_costmaps,
 )
@@ -203,10 +207,29 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     display_static_map = np.asarray(display_grid_map.occupancy, dtype=bool)
     belief = PartialFireCostmap(grid_map, static_map, config)
     world = WorldState.from_scenario(args.scenario, grid_map, config)
+    world.set_known_occupancy_map(display_static_map)
     fire_localizer = FireLocalizer(
         world.map_metadata,
         world.static_obstacle_map,
         FireLocalizationConfig.from_mapping(args.fire_localization_config),
+    )
+    dynamic_mapping_config = DynamicObstacleMappingConfig.from_mapping(
+        args.dynamic_obstacle_mapping_config
+    )
+    dynamic_obstacle_mapper = DynamicObstacleMapper(
+        world.map_metadata, world.known_occupancy_map, dynamic_mapping_config,
+    )
+    if config.use_inflation and not math.isclose(
+        dynamic_mapping_config.obstacle_inflation_radius_m,
+        config.inflation_radius,
+        abs_tol=1e-9,
+    ):
+        raise ValueError(
+            "dynamic obstacle inflation must match planner inflation radius"
+        )
+    exit_blockage_evaluator = ExitBlockageEvaluator(
+        world.map_metadata,
+        ExitBlockageConfig.from_mapping(args.exit_blockage_config),
     )
     # Existing detector and viewer APIs remain dictionary-based adapters.
     args.humans = world.legacy_humans()
@@ -521,6 +544,12 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         pygame_viewer = PygameSimulationViewer(
             grid_map, config,
             display_static_obstacle_map=display_static_map,
+            perception_display_config=PerceptionMapDisplayConfig.from_mapping(
+                args.perception_map_display_config
+            ),
+            overlay_config=MapOverlayConfig.from_mapping(
+                args.map_overlays_config
+            ),
         )
         if not args.no_thermal_window:
             try:
@@ -549,6 +578,17 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             observed_before = belief.observed_mask.copy()
             latest_thermal, rays, _ = ground_truth.capture_thermal(
                 thermal_camera, state, fds_time
+            )
+            if dynamic_mapping_config.enabled:
+                dynamic_obstacle_mapper.process_thermal_rays(
+                    f"obstacle:{sim_elapsed:.9f}", rays,
+                    simulation_time=sim_elapsed, world_state=world,
+                )
+            dynamic_update = belief.update_dynamic_obstacles(
+                world.dynamic_obstacle_mask(),
+                inflation_radius_m=(
+                    dynamic_mapping_config.obstacle_inflation_radius_m
+                ),
             )
             thermal_update = belief.update_thermal_observations(
                 latest_thermal, rays, fds_time
@@ -605,12 +645,41 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                 from mapping.partial_costmap import BeliefUpdate
                 localization_update = BeliefUpdate(frozenset(), frozenset())
             _, newly_blocked = _combine_updates(
-                thermal_update, co_update, localization_update
+                thermal_update, co_update, localization_update, dynamic_update
             )
             world.estimated_fire_map.sync_from_belief(belief)
             world.estimated_fire_map.sync_fire_localization(fire_localizer)
             world.fire_localization_result = fire_localizer.latest_result
             world.update_costmap_revision(belief.revision)
+            if (
+                exit_blockage_evaluator.config.enabled
+                and dynamic_update.changed_cells
+            ):
+                for exit_item in world.exits.values():
+                    blockage = exit_blockage_evaluator.evaluate(
+                        exit_item, (state.x, state.y),
+                        cost_map=belief.final_cost_map,
+                        static_obstacle_map=world.known_occupancy_map,
+                        dynamic_inflated_map=(
+                            belief.dynamic_inflated_obstacle_map
+                        ),
+                        active_obstacles=world.get_active_dynamic_obstacles(),
+                        evaluated_at=sim_elapsed,
+                        environment_revision=world.environment_revision,
+                    )
+                    world.record_exit_blockage_result(blockage)
+                    if blockage.blocked_confirmed and exit_item.status is not ExitStatus.BLOCKED:
+                        world.update_exit_status(
+                            exit_item.exit_id, ExitStatus.BLOCKED,
+                            sim_time=sim_elapsed, reason=blockage.reason,
+                        )
+                        if exit_item.exit_id in {
+                            selected_exit, world.current_target_exit_id,
+                            world.current_exploration_target_exit_id,
+                        }:
+                            world.last_perception_replan_reason = (
+                                f"current exit {exit_item.exit_id} blocked by perceived obstacle"
+                            )
             # Capture hazard knowledge at observation time so later normal
             # readings do not erase evidence seen earlier in the mission.
             world.hazard_knowledge_decision = hazard_tracker.evaluate(
@@ -855,10 +924,19 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     dynamic_obstacle_map=world.dynamic_obstacle_mask(),
                     estimated_fire_map=world.estimated_fire_map,
                 )
-                valid = route_validation.safe
+                target_blocked = (
+                    world.active_route_decision.target_exit_id is not None
+                    and world.get_exit(
+                        world.active_route_decision.target_exit_id
+                    ).status is ExitStatus.BLOCKED
+                )
+                valid = route_validation.safe and not target_blocked
                 blocked_grid = route_validation.first_rejected_cell
                 invalid_reason = (
-                    None if valid else route_validation.rejection_reasons[0].value
+                    None if valid else (
+                        "current_exit_blocked" if target_blocked else
+                        route_validation.rejection_reasons[0].value
+                    )
                 )
                 world.record_route_validation(
                     sim_time=sim_elapsed, costmap_revision=belief.revision
@@ -902,6 +980,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                                 cost_map=belief.final_cost_map,
                                 costmap_revision=belief.revision,
                                 created_at=sim_elapsed,
+                                risk_first=(invalid_reason == "current_exit_blocked"),
                             )
                         if replacement.success:
                             activate_replacement_route(replacement)
@@ -941,13 +1020,23 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                         estimated_fire_map=world.estimated_fire_map,
                     )
                     last_route_environment_revision = world.environment_revision
-                    if not search_validation.safe:
+                    exploration_target_blocked = (
+                        world.active_exploration_plan is not None
+                        and world.get_exit(
+                            world.active_exploration_plan.target_exit_id
+                        ).status is ExitStatus.BLOCKED
+                    )
+                    if not search_validation.safe or exploration_target_blocked:
                         was_exploring = world.active_exploration_plan is not None
                         follower.clear()
                         blocked_return_grid = search_validation.first_rejected_cell
                         status = (
                             "SEARCH_PATH_INVALIDATED: "
-                            + search_validation.rejection_reasons[0].value
+                            + (
+                                "current_exit_blocked"
+                                if exploration_target_blocked else
+                                search_validation.rejection_reasons[0].value
+                            )
                         )
                         no_path_active = True
                         world.clear_path_simplification()
@@ -1613,6 +1702,9 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     world.active_path_simplification,
                     victim_follower,
                     world.fire_localization_result,
+                    exit_states={
+                        key: item.status for key, item in world.exits.items()
+                    },
                 )
                 pygame_viewer.close()
             if thermal_viewer is not None:
@@ -1647,6 +1739,9 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                 world.active_path_simplification,
                 victim_follower,
                 world.fire_localization_result,
+                exit_states={
+                    key: item.status for key, item in world.exits.items()
+                },
             )
         sim_elapsed += config.simulation_dt
 
@@ -1778,6 +1873,14 @@ def apply_scenario_config(args):
     args.path_simplification_config = scenario.get("path_simplification", {})
     args.victim_following_config = scenario.get("victim_following", {})
     args.fire_localization_config = scenario.get("fire_localization", {})
+    args.dynamic_obstacle_mapping_config = scenario.get(
+        "dynamic_obstacle_mapping", {}
+    )
+    args.exit_blockage_config = scenario.get("exit_blockage", {})
+    args.perception_map_display_config = scenario.get(
+        "perception_map_display", {}
+    )
+    args.map_overlays_config = scenario.get("map_overlays", {})
     return args
 
 

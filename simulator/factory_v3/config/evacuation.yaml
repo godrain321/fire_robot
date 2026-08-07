@@ -88,6 +88,46 @@ exit_selection:
   final_tie_breaker: exit_id
   float_tolerance: 1.0e-6
 
+dynamic_obstacle_mapping:
+  enabled: true
+  minimum_confirmation_observations: 2
+  confirmation_timeout_s: 1.0
+  duplicate_merge_distance_m: 0.3
+  obstacle_diameter_m: 0.2
+  # Matches the existing planner robot/inflation radius.
+  obstacle_inflation_radius_m: 0.45
+  stale_obstacle_timeout_s: 10.0
+  minimum_confidence: 0.6
+
+exit_blockage:
+  enabled: true
+  approach_region_depth_m: 1.5
+  required_clear_width_m: 0.8
+  confirmation_observations: 2
+  release_observations: 3
+  consider_human_clearance: true
+  human_clearance_m: 0.2
+  exclude_blocked_exit_immediately: true
+
+perception_map_display:
+  unknown_color: [110, 110, 110]
+  safe_color: [40, 170, 70]
+  caution_color: [230, 190, 40]
+  danger_color: [210, 50, 50]
+  blocked_color: [25, 25, 25]
+  dynamic_obstacle_color: [120, 40, 150]
+  safe_cost_max: 0.25
+  caution_cost_max: 0.60
+  danger_cost_max: 0.99
+
+map_overlays:
+  show_dynamic_obstacles: true
+  show_fire_candidates: true
+  show_estimated_fire_center: true
+  show_detected_humans: true
+  show_exit_states: true
+  show_current_path: true
+
 # Exploration starts at robot_start and resumes at the robot's actual pose.
 # Entrance return is a separate completion policy and remains disabled until
 # an explicit entrance exit ID is configured.

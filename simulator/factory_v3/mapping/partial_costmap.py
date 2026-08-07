@@ -90,6 +90,8 @@ class PartialFireCostmap:
         self.co_cost_map = np.zeros(shape, dtype=float)
         self.unknown_cost_map = np.zeros(shape, dtype=float)
         self.estimated_fire_cost_map = np.zeros(shape, dtype=float)
+        self.dynamic_obstacle_map = np.zeros(shape, dtype=bool)
+        self.dynamic_inflated_obstacle_map = np.zeros(shape, dtype=bool)
         self.blocked_mask = static.copy()
         self.final_cost_map = np.full(shape, config.base_cost, dtype=float)
         self.last_observed_time_map = np.full(shape, np.nan, dtype=float)
@@ -234,6 +236,40 @@ class PartialFireCostmap:
         self.estimated_fire_cost_map = new_cost
         return self._finish_update(changed, old_blocked)
 
+    def update_dynamic_obstacles(
+        self, obstacle_map, *, inflation_radius_m: float,
+    ) -> BeliefUpdate:
+        """Replace sensor-known dynamic occupancy and inflate it for planning."""
+        raw = np.asarray(obstacle_map, dtype=bool)
+        if raw.shape != self.shape:
+            raise ValueError(f"dynamic obstacle shape={raw.shape}, expected={self.shape}")
+        if inflation_radius_m < 0.0:
+            raise ValueError("dynamic obstacle inflation radius must be non-negative")
+        inflated = raw.copy()
+        radius_cells = int(math.ceil(
+            inflation_radius_m / self.grid_map.resolution
+        ))
+        if radius_cells:
+            for row, col in np.argwhere(raw):
+                for dy in range(-radius_cells, radius_cells + 1):
+                    for dx in range(-radius_cells, radius_cells + 1):
+                        if math.hypot(dx, dy) * self.grid_map.resolution > inflation_radius_m + 1e-12:
+                            continue
+                        yy, xx = int(row + dy), int(col + dx)
+                        if 0 <= yy < self.shape[0] and 0 <= xx < self.shape[1]:
+                            inflated[yy, xx] = True
+        changed_indices = np.argwhere(
+            (raw != self.dynamic_obstacle_map)
+            | (inflated != self.dynamic_inflated_obstacle_map)
+        )
+        if changed_indices.size == 0:
+            return BeliefUpdate(frozenset(), frozenset())
+        old_blocked = self._snapshot_blocked()
+        self.dynamic_obstacle_map = raw.copy()
+        self.dynamic_inflated_obstacle_map = inflated
+        changed = {(int(col), int(row)) for row, col in changed_indices}
+        return self._finish_update(changed, old_blocked)
+
     def recalculate(self) -> None:
         """Rebuild costs using observed values and per-modality uncertainty."""
         cfg = self.config
@@ -281,7 +317,8 @@ class PartialFireCostmap:
             self.co_observed_mask & (self.co_belief_map >= cfg.co_blocked)
         )
         self.blocked_mask = (
-            self.static_obstacle_map | temperature_blocked | co_blocked
+            self.static_obstacle_map | self.dynamic_inflated_obstacle_map
+            | temperature_blocked | co_blocked
         )
         self.final_cost_map = (
             cfg.base_cost
@@ -301,6 +338,7 @@ class PartialFireCostmap:
             "temperature_belief_map", "co_belief_map",
             "temperature_cost_map", "co_cost_map", "unknown_cost_map",
             "estimated_fire_cost_map",
+            "dynamic_obstacle_map", "dynamic_inflated_obstacle_map",
             "blocked_mask", "final_cost_map", "last_observed_time_map",
         )
         mismatches = {

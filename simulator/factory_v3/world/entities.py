@@ -252,6 +252,8 @@ class DynamicObstacle:
     last_seen_at: float | None = None
     source: str = "unknown"
     confidence: float = 0.0
+    observation_count: int = 0
+    confirmed: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -272,8 +274,15 @@ class DynamicObstacle:
         if not 0.0 <= float(self.confidence) <= 1.0:
             raise ValueError("confidence must be between 0 and 1")
         self.confidence = float(self.confidence)
+        if self.observation_count < 0:
+            raise ValueError("observation_count must be non-negative")
+        if type(self.confirmed) is not bool:
+            raise TypeError("confirmed must be bool")
 
-    def update(self, *, position_world=None, status=None, sim_time=None, confidence=None) -> None:
+    def update(
+        self, *, position_world=None, status=None, sim_time=None,
+        confidence=None, observation_count=None,
+    ) -> None:
         if position_world is not None:
             self.position_world = _position(position_world)
         if status is not None:
@@ -287,6 +296,11 @@ class DynamicObstacle:
             if not 0.0 <= confidence <= 1.0:
                 raise ValueError("confidence must be between 0 and 1")
             self.confidence = confidence
+        if observation_count is not None:
+            observation_count = int(observation_count)
+            if observation_count < self.observation_count:
+                raise ValueError("observation_count must not decrease")
+            self.observation_count = observation_count
         if self.first_seen_at is None and sim_time is not None:
             self.first_seen_at = float(sim_time)
         self.last_seen_at = None if sim_time is None else float(sim_time)
