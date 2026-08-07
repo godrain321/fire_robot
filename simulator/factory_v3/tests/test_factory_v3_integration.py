@@ -118,11 +118,15 @@ def test_thermal_camera_respects_nonzero_mesh_origin():
 
 def test_victim_starts_hidden_by_slam_occupancy_before_scripted_motion():
     _, _, grid, scenario = _scenario_grid()
-    detector = SimpleHumanDetector(scenario["human_detection_range_m"])
+    detector = SimpleHumanDetector(
+        scenario["human_detection_range_m"],
+        scenario["human_detection_horizontal_fov_deg"],
+    )
     start = scenario["robot_start"]
     victim = scenario["humans"][0]
     detections = detector.detect(
         (start["x"], start["y"]), scenario["humans"],
+        robot_heading_rad=np.radians(start["yaw_deg"]),
         obstacle_map=np.asarray(grid.occupancy, dtype=bool),
         map_origin=(grid.x_min, grid.y_min), map_resolution=grid.resolution,
     )

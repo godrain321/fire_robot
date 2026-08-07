@@ -46,6 +46,7 @@ humans:
         - [14.4, 15.0]
 dynamic_obstacles: []
 human_detection_range_m: 10.0
+human_detection_horizontal_fov_deg: 100.0
 victim_approach_distance_m: 1.0
 
 victim_following:

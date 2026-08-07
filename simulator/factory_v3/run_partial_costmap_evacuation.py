@@ -345,7 +345,9 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     ))
 
     metrics = SimulationMetrics()
-    human_detector = SimpleHumanDetector(args.human_detection_range)
+    human_detector = SimpleHumanDetector(
+        args.human_detection_range, args.human_detection_fov_deg
+    )
     active_victim = None
     victim_reached = False
     selected_exit = None
@@ -1102,6 +1104,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         detections = human_detector.detect(
             robot_position=(state.x, state.y),
             humans=args.humans,
+            robot_heading_rad=state.theta,
             obstacle_map=static_map,
             map_origin=(grid_map.x_min, grid_map.y_min),
             map_resolution=grid_map.resolution,
@@ -1887,6 +1890,9 @@ def apply_scenario_config(args):
     args.humans = list(scenario["humans"])
     args.exits = list(scenario["exits"])
     args.human_detection_range = float(scenario["human_detection_range_m"])
+    args.human_detection_fov_deg = float(
+        scenario["human_detection_horizontal_fov_deg"]
+    )
     args.victim_approach_distance = float(scenario["victim_approach_distance_m"])
     mission_config = scenario.get("mission", {})
     args.exit_reached_distance = float(
