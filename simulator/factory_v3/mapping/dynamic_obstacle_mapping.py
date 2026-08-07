@@ -126,10 +126,16 @@ class DynamicObstacleMapper:
                 self._tracks.append(track)
             elif track.last_observation_id != observation_id:
                 count = track.observation_count + 1
-                track.position_world = (
+                averaged_position = (
                     (track.position_world[0] * track.observation_count + point[0]) / count,
                     (track.position_world[1] * track.observation_count + point[1]) / count,
                 )
+                # Two individually valid endpoints can straddle a concave wall
+                # boundary and produce an average inside known occupancy.  Keep
+                # the last known-free anchor unless the averaged position is
+                # also a valid free cell.
+                if self._is_known_free(averaged_position):
+                    track.position_world = averaged_position
                 track.observation_count = count
                 track.last_seen_at = now
                 track.last_observation_id = observation_id
@@ -189,3 +195,9 @@ class DynamicObstacleMapper:
             <= self.config.duplicate_merge_distance_m
         ]
         return min(candidates, default=(None, None), key=lambda item: item[0])[1]
+
+    def _is_known_free(self, point):
+        if not self.metadata.is_world_position_in_bounds(*point):
+            return False
+        col, row = self.metadata.world_to_grid(*point)
+        return not bool(self.static_obstacle_map[row, col])

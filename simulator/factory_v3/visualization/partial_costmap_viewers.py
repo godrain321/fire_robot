@@ -572,7 +572,17 @@ class MatplotlibThermalViewer:
     """Thermal image viewer that consumes raw Celsius arrays only."""
 
     def __init__(self) -> None:
-        import matplotlib.pyplot as plt
+        # Binary-extension import failures (for example Matplotlib compiled
+        # against NumPy 1.x under NumPy 2.x) can print a full traceback before
+        # raising the ImportError handled by the simulator.  Capture only that
+        # noisy import output; the caller still reports a concise warning and
+        # continues with Pygame.
+        import contextlib
+        import io
+
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            import matplotlib.pyplot as plt
 
         self.plt = plt
         plt.ion()

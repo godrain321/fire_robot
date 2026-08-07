@@ -79,6 +79,32 @@ def test_known_static_occlusion_and_invalid_or_unoccluded_rays_are_not_mapped():
         )
 
 
+def test_track_average_cannot_move_confirmed_obstacle_into_static_occupancy():
+    metadata = MapMetadata(0, 1, 0, 1, 0.1, 11, 11, (0, 0))
+    static = np.zeros((11, 11), bool)
+    static[5, 5] = True
+    state = WorldState(metadata, static)
+    mapper = DynamicObstacleMapper(
+        metadata, static,
+        DynamicObstacleMappingConfig(
+            minimum_confirmation_observations=2,
+            duplicate_merge_distance_m=0.3,
+        ),
+    )
+
+    mapper.process_thermal_rays(
+        "left", (ray((0.39, 0.5)),), simulation_time=0, world_state=state,
+    )
+    update = mapper.process_thermal_rays(
+        "right", (ray((0.61, 0.5)),), simulation_time=0.1, world_state=state,
+    )
+
+    obstacle = state.get_dynamic_obstacle(update.confirmed_obstacle_ids[0])
+    col, row = metadata.world_to_grid(*obstacle.position_world)
+    assert not static[row, col]
+    assert obstacle.position_world == pytest.approx((0.39, 0.5))
+
+
 def test_dynamic_layer_inflation_and_revision_change_only_when_mask_changes():
     grid = GridMap((0, 4, 0, 4, 0, 1), [], [], 1, 0)
     belief = PartialFireCostmap(
