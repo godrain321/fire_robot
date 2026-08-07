@@ -21,6 +21,7 @@ class ExitBlockageConfig:
     consider_human_clearance: bool = True
     human_clearance_m: float = 0.2
     exclude_blocked_exit_immediately: bool = True
+    ignored_exit_ids: tuple[str, ...] = ()
 
     @classmethod
     def from_mapping(cls, values):
@@ -28,6 +29,11 @@ class ExitBlockageConfig:
         unknown = set(values) - set(cls.__dataclass_fields__)
         if unknown:
             raise ValueError(f"unknown exit_blockage settings: {sorted(unknown)}")
+        if "ignored_exit_ids" in values:
+            raw = values["ignored_exit_ids"]
+            if not isinstance(raw, (list, tuple)):
+                raise TypeError("ignored_exit_ids must be a list of exit IDs")
+            values["ignored_exit_ids"] = tuple(raw)
         return cls(**values)
 
     def __post_init__(self):
@@ -42,6 +48,10 @@ class ExitBlockageConfig:
             raise ValueError("human_clearance_m must be non-negative")
         if self.confirmation_observations < 1 or self.release_observations < 1:
             raise ValueError("exit blockage observation counts must be at least one")
+        if any(not isinstance(exit_id, str) or not exit_id for exit_id in self.ignored_exit_ids):
+            raise ValueError("ignored_exit_ids must contain non-empty strings")
+        if len(set(self.ignored_exit_ids)) != len(self.ignored_exit_ids):
+            raise ValueError("ignored_exit_ids must not contain duplicates")
 
 
 @dataclass(frozen=True)
@@ -77,6 +87,16 @@ class ExitBlockageEvaluator:
         expected = (self.metadata.height, self.metadata.width)
         if costs.shape != expected or static.shape != expected or dynamic.shape != expected:
             raise ValueError("exit blockage map shape mismatch")
+        if exit_item.exit_id in self.config.ignored_exit_ids:
+            approach = exit_item.approach_position_world or exit_item.position_world
+            candidate = self.metadata.world_to_grid(*approach)
+            return ExitBlockageResult(
+                exit_item.exit_id, False, True, False,
+                (candidate,), (candidate,), (),
+                float(self.config.required_clear_width_m), 0,
+                "automatic blockage disabled for configured FDS door mesh",
+                float(evaluated_at), int(environment_revision),
+            )
         start = self.metadata.world_to_grid(*current_position_world)
         approach = exit_item.approach_position_world or exit_item.position_world
         marker = exit_item.position_world

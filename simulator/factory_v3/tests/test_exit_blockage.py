@@ -131,11 +131,54 @@ def test_factory_exit1_fallen_rack_geometry_blocks_full_approach():
     assert not result.reachable_goal_exists
 
 
+def test_configured_fds_door_exit_is_not_automatically_blocked():
+    metadata, _, costs, static = setup()
+    item = Exit("EXIT2", (3, 4), (3, 2), ExitStatus.UNKNOWN)
+    dynamic = np.ones_like(static)
+    evaluator = ExitBlockageEvaluator(
+        metadata,
+        ExitBlockageConfig(
+            ignored_exit_ids=("EXIT2", "EXIT3"),
+            confirmation_observations=2,
+        ),
+    )
+    result = evaluator.evaluate(
+        item, (3, 0), cost_map=costs, static_obstacle_map=static,
+        dynamic_inflated_map=dynamic, active_obstacles=(obstacle(10),),
+        evaluated_at=1, environment_revision=1,
+    )
+    assert result.reachable_goal_exists
+    assert not result.blocked_geometry
+    assert not result.blocked_confirmed
+    assert "disabled" in result.reason
+
+
+def test_non_ignored_exit_still_uses_normal_blockage_detection():
+    metadata, item, costs, static = setup()
+    dynamic = np.zeros_like(static)
+    dynamic[3, 1:6] = True
+    evaluator = ExitBlockageEvaluator(
+        metadata,
+        ExitBlockageConfig(
+            ignored_exit_ids=("EXIT2", "EXIT3"),
+            required_clear_width_m=1,
+        ),
+    )
+    result = evaluator.evaluate(
+        item, (3, 0), cost_map=costs, static_obstacle_map=static,
+        dynamic_inflated_map=dynamic, active_obstacles=(obstacle(),),
+        evaluated_at=1, environment_revision=1,
+    )
+    assert result.blocked_confirmed
+
+
 @pytest.mark.parametrize("values", [
     {"required_clear_width_m": 0},
     {"approach_region_depth_m": -1},
     {"confirmation_observations": 0},
     {"release_observations": 0},
+    {"ignored_exit_ids": ("EXIT2", "EXIT2")},
+    {"ignored_exit_ids": ("",)},
 ])
 def test_invalid_exit_blockage_config(values):
     with pytest.raises((ValueError, TypeError)):

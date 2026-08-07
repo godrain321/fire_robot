@@ -135,6 +135,10 @@ exit_blockage:
   consider_human_clearance: true
   human_clearance_m: 0.2
   exclude_blocked_exit_immediately: true
+  # EXIT2/EXIT3 have intentional FDS door meshes that thermal occlusion can
+  # otherwise misclassify as newly discovered obstacles. EXIT1 remains fully
+  # monitored so its fallen-rack blockage can still be detected.
+  ignored_exit_ids: [EXIT2, EXIT3]
 
 perception_map_display:
   unknown_color: [110, 110, 110]
