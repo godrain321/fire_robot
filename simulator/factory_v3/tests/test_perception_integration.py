@@ -69,3 +69,9 @@ def test_main_view_uses_robot_belief_and_mapper_has_no_ground_truth_input():
     assert "belief.final_cost_map" in draw_source
     assert "GroundTruth" not in mapper_source
     assert "fds_result" not in mapper_source
+
+
+def test_dynamic_overlay_draws_only_directly_observed_obstacle_cells():
+    draw_source = inspect.getsource(PygameSimulationViewer._draw_blocked)
+    assert "belief.dynamic_obstacle_map" in draw_source
+    assert "belief.dynamic_inflated_obstacle_map" not in draw_source

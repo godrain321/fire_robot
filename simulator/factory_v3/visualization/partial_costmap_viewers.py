@@ -254,7 +254,10 @@ class PygameSimulationViewer:
                     pygame.draw.rect(self.screen, self.BLOCKED, rect)
                 if (
                     self.overlay_config.show_dynamic_obstacles
-                    and belief.dynamic_inflated_obstacle_map[gy, gx]
+                    # Display only cells directly attributed to a perceived
+                    # obstacle. Inflation remains active for planning safety
+                    # but is intentionally not drawn as discovered geometry.
+                    and belief.dynamic_obstacle_map[gy, gx]
                 ):
                     pygame.draw.rect(
                         self.screen,
