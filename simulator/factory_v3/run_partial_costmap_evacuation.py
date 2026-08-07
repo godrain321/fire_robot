@@ -33,6 +33,9 @@ from navigation.exit_switching import (
     ExitSwitchingConfig, RouteCostTrendMonitor, current_direction_world,
     evaluate_path_cost,
 )
+from navigation.exploration_manager import (
+    ExplorationConfig, ExplorationManager, ExplorationPhase,
+)
 from planner.a_star import weighted_a_star_with_escape
 from planner.evacuation_planner import EvacuationPlanner, ExitSelectionConfig
 from planner.exit_evaluator import ExitEvaluationConfig, ExitEvaluator
@@ -203,6 +206,8 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         exit_evaluator,
         ExitSelectionConfig.from_mapping(args.exit_selection_config),
     )
+    exploration_config = ExplorationConfig.from_mapping(args.exploration_config)
+    exploration_manager = ExplorationManager(evacuation_planner, exploration_config)
     hazard_knowledge_config = HazardKnowledgeConfig.from_mapping(
         args.hazard_knowledge_config
     )
@@ -231,7 +236,11 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         PathSimplificationConfig.from_mapping(args.path_simplification_config),
     )
     world.attach_travel_history(travel_history)
-    world.set_mission_entry(args.mission_entry_id, args.start)
+    world.set_initial_robot_pose(args.start, math.radians(args.start_theta))
+    world.configure_exploration_return(
+        enabled=exploration_config.return_to_entrance_when_complete,
+        entrance_exit_id=exploration_config.return_entrance_exit_id,
+    )
     world.record_robot_position(args.start, sim_time=0.0)
     map_x = np.asarray([
         world.map_metadata.grid_to_world(col, 0)[0]
@@ -241,7 +250,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         world.map_metadata.grid_to_world(0, row)[1]
         for row in range(world.map_metadata.height)
     ])
-    for name, point in (("robot_start", args.start), ("search_waypoint", args.search_waypoint)):
+    for name, point in (("robot_start", args.start),):
         _validate_free_point(name, point, grid_map)
     for human in args.humans:
         _validate_free_point(f"human {human['id']}", _point(human), grid_map)
@@ -254,7 +263,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             )
 
     state = RobotState(args.start[0], args.start[1], math.radians(args.start_theta))
-    goal = tuple(args.search_waypoint)
+    goal = tuple(args.start)
     follower = ReplannablePathFollower(grid_map, config)
     thermal_camera = ThermalCameraMLX90640()
     # Stage 2 must be able to represent the specified 1600 ppm threshold.
@@ -387,6 +396,36 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                 path_lengths_m=path_lengths,
             )
         return True
+
+    def start_or_resume_exploration(phase: ExplorationPhase) -> bool:
+        """Plan from the robot's actual pose; this function never teleports."""
+        nonlocal goal, status, no_path_active, selected_exit
+        follower.clear()
+        world.clear_active_route()
+        world.clear_active_exploration_plan()
+        selected_exit = None
+        plan = exploration_manager.plan_next_exit(
+            world, (state.x, state.y), cost_map=belief.final_cost_map,
+            costmap_revision=belief.revision, created_at=sim_elapsed,
+            phase=phase,
+        )
+        if not plan.success:
+            status = f"EXPLORATION_COMPLETE: {plan.failure_reason}"
+            no_path_active = plan.failure_reason != "no_unchecked_exits"
+            return False
+        goal = plan.target_position_world
+        simplified = activate_simplified_path(plan.path_grid, goal_world=goal)
+        if simplified is None:
+            status = "EXPLORATION_NO_PATH: simplification failed"
+            no_path_active = True
+            return False
+        world.record_exploration_plan(plan, yaw_rad=state.theta)
+        status = f"EXPLORING {plan.target_exit_id}"
+        no_path_active = False
+        return True
+
+    if exploration_config.enabled:
+        start_or_resume_exploration(ExplorationPhase.INITIAL)
     pygame_viewer = None
     thermal_viewer = None
     if not args.headless:
@@ -818,6 +857,8 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             metrics.detected_victim = active_victim["id"]
             goal = (active_victim["x"], active_victim["y"])
             follower.clear()
+            world.clear_active_exploration_plan()
+            world.clear_path_simplification()
             status = f"APPROACHING {active_victim['id']}"
         if active_victim is not None and not victim_reached and math.hypot(
             state.x - active_victim["x"], state.y - active_victim["y"]
@@ -1121,6 +1162,23 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         previous_grid = current_grid
 
         if (
+            active_victim is None
+            and world.active_exploration_plan is not None
+            and follower.goal_reached(state, goal)
+        ):
+            checked_exit_id = world.active_exploration_plan.target_exit_id
+            world.update_exit_status(
+                checked_exit_id, ExitStatus.USABLE,
+                sim_time=sim_elapsed,
+            )
+            world.clear_active_exploration_plan()
+            world.clear_path_simplification()
+            follower.clear()
+            status = f"EXIT_CHECKED: {checked_exit_id}"
+            if exploration_config.reselect_after_each_exit_check:
+                start_or_resume_exploration(ExplorationPhase.INITIAL)
+
+        if (
             victim_reached
             and (selected_exit is not None or returning_by_history or returning_to_entrance)
             and follower.goal_reached(state, goal)
@@ -1147,6 +1205,28 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                 world.clear_active_evacuation_plan()
             world.clear_active_route()
             status = "EVACUATION_SUCCESS"
+            if (
+                exploration_config.enabled
+                and exploration_config.resume_after_victim_evacuation
+                and exploration_config.start_after_evacuation
+            ):
+                if mission.current_state is MissionState.EVACUATION_COMPLETE:
+                    mission.handle_event(
+                        MissionEvent.SEARCH_RESUMED,
+                        sim_time=sim_elapsed,
+                        reason="resume exploration from evacuation completion pose",
+                    )
+                active_victim = None
+                victim_reached = False
+                selected_exit = None
+                returning_by_history = False
+                returning_to_entrance = False
+                blocked_return_grid = None
+                resumed = start_or_resume_exploration(
+                    ExplorationPhase.RESUMED_AFTER_EVACUATION
+                )
+                if resumed:
+                    continue
             if pygame_viewer is not None:
                 pygame_viewer.draw(
                     belief, state, tuple(args.start), goal, follower, trajectory,
@@ -1309,7 +1389,6 @@ def apply_scenario_config(args):
     )
     args.humans = list(scenario["humans"])
     args.exits = list(scenario["exits"])
-    args.search_waypoint = _point(scenario["search_waypoint"])
     args.human_detection_range = float(scenario["human_detection_range_m"])
     args.victim_approach_distance = float(scenario["victim_approach_distance_m"])
     mission_config = scenario.get("mission", {})
@@ -1329,10 +1408,10 @@ def apply_scenario_config(args):
     )
     args.hazard_knowledge_config = scenario.get("hazard_knowledge", {})
     args.exit_switching_config = scenario.get("exit_switching", {})
+    args.exploration_config = scenario.get("exploration", {})
     args.path_validation_config = scenario.get("path_validation", {})
     args.replanning_config = scenario.get("replanning", {})
     args.path_simplification_config = scenario.get("path_simplification", {})
-    args.mission_entry_id = str(scenario.get("mission_entry_id", "MISSION_ENTRY"))
     return args
 
 

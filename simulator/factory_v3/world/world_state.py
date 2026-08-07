@@ -119,6 +119,18 @@ class WorldState:
         self.last_exit_switch_at: float | None = None
         self.exit_switch_cooldown_until: float | None = None
         self.last_exit_switch_validation: str | None = None
+        self.initial_robot_pose_world: tuple[float, float, float] | None = None
+        self.exploration_entry_pose_world: tuple[float, float, float] | None = None
+        self.exploration_resume_pose_world: tuple[float, float, float] | None = None
+        self.robot_grid_position: tuple[int, int] | None = None
+        self.current_exploration_target_exit_id: str | None = None
+        self.exploration_plan_start_world: tuple[float, float] | None = None
+        self.exploration_exit_path_lengths_m: dict[str, float] = {}
+        self.exploration_costmap_revision: int | None = None
+        self.exploration_phase: str | None = None
+        self.exploration_return_target_exit_id: str | None = None
+        self.exploration_return_to_entrance_enabled = False
+        self.active_exploration_plan = None
 
     @classmethod
     def from_scenario(cls, scenario: dict[str, Any], grid_map, config) -> "WorldState":
@@ -180,6 +192,49 @@ class WorldState:
         if self.mission_start_position_world is None:
             self.mission_start_position_world = self.mission_entry_position_world
 
+    def set_initial_robot_pose(self, position_world, yaw_rad: float) -> None:
+        col, row = self.validate_position(position_world, label="initial robot pose")
+        if not math.isfinite(float(yaw_rad)):
+            raise ValueError("initial robot yaw must be finite")
+        self.initial_robot_pose_world = (
+            float(position_world[0]), float(position_world[1]), float(yaw_rad)
+        )
+        self.mission_start_position_world = self.initial_robot_pose_world[:2]
+        self.robot_position_world = self.initial_robot_pose_world[:2]
+        self.robot_grid_position = (col, row)
+
+    def record_exploration_plan(self, plan, *, yaw_rad: float) -> None:
+        if not plan.success:
+            raise ValueError("cannot activate an unsuccessful exploration plan")
+        pose = (
+            float(plan.start_position_world[0]),
+            float(plan.start_position_world[1]), float(yaw_rad),
+        )
+        if plan.phase.value == "initial":
+            self.exploration_entry_pose_world = pose
+        else:
+            self.exploration_resume_pose_world = pose
+        self.current_exploration_target_exit_id = plan.target_exit_id
+        self.exploration_plan_start_world = tuple(plan.start_position_world)
+        self.exploration_exit_path_lengths_m = dict(plan.exit_path_lengths_m)
+        self.exploration_costmap_revision = int(plan.costmap_revision)
+        self.exploration_phase = plan.phase.value
+        self.active_exploration_plan = plan
+
+    def configure_exploration_return(
+        self, *, enabled: bool, entrance_exit_id: str | None,
+    ) -> None:
+        if enabled and entrance_exit_id is None:
+            raise ValueError("enabled exploration return requires an entrance exit ID")
+        if entrance_exit_id is not None:
+            self.get_exit(entrance_exit_id)
+        self.exploration_return_to_entrance_enabled = bool(enabled)
+        self.exploration_return_target_exit_id = entrance_exit_id
+
+    def clear_active_exploration_plan(self) -> None:
+        self.active_exploration_plan = None
+        self.current_exploration_target_exit_id = None
+
     def update_costmap_revision(self, revision: int) -> None:
         if isinstance(revision, bool) or int(revision) < self.costmap_revision:
             raise ValueError("costmap revision must be monotonic and non-negative")
@@ -231,6 +286,9 @@ class WorldState:
         self.validate_position(position_world, label="robot")
         self.robot_position_world = (
             float(position_world[0]), float(position_world[1])
+        )
+        self.robot_grid_position = self.map_metadata.world_to_grid(
+            *self.robot_position_world
         )
         if self.travel_history is None:
             raise RuntimeError("no TravelHistory is attached")
@@ -522,6 +580,18 @@ class WorldState:
             "last_exit_switch_at": self.last_exit_switch_at,
             "exit_switch_cooldown_until": self.exit_switch_cooldown_until,
             "last_exit_switch_validation": self.last_exit_switch_validation,
+            "initial_robot_pose_world": self.initial_robot_pose_world,
+            "exploration_entry_pose_world": self.exploration_entry_pose_world,
+            "exploration_resume_pose_world": self.exploration_resume_pose_world,
+            "robot_grid_position": self.robot_grid_position,
+            "current_exploration_target_exit_id": self.current_exploration_target_exit_id,
+            "exploration_plan_start_world": self.exploration_plan_start_world,
+            "exploration_exit_path_lengths_m": self.exploration_exit_path_lengths_m,
+            "exploration_costmap_revision": self.exploration_costmap_revision,
+            "exploration_phase": self.exploration_phase,
+            "exploration_return_target_exit_id": self.exploration_return_target_exit_id,
+            "exploration_return_to_entrance_enabled": self.exploration_return_to_entrance_enabled,
+            "active_exploration_plan": self.active_exploration_plan,
             "static_obstacle_map": self.static_obstacle_map,
             "dynamic_obstacles": self.dynamic_obstacles,
             "exits": self.exits,

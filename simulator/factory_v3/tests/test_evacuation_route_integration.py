@@ -62,7 +62,8 @@ def test_world_route_metadata_serializes_and_revisions_are_monotonic():
 
 def test_stage6_yaml_sections_load():
     scenario = yaml.safe_load((BASE / "config/evacuation.yaml").read_text())
-    assert scenario["mission_entry_id"] == "MISSION_ENTRY"
+    assert "mission_entry_id" not in scenario
+    assert scenario["exploration"]["use_current_robot_pose_as_start"] is True
     assert scenario["evacuation_route_selection"]["fire_information_strategy"] == "evaluate_all_exits"
     assert scenario["evacuation_route_selection"]["no_fire_information_strategy"] == "nearest_reachable_exit"
     assert scenario["hazard_knowledge"]["temperature_elevated_c"] == 35.0
