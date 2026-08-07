@@ -26,6 +26,8 @@ class MissionState(Enum):
     EVALUATING_HAZARD_INFORMATION = "Evaluating sensor hazard knowledge"
     EVALUATING_EXITS = "Evaluating registered exits"
     ESCORT_VICTIM = "Escorting victim"
+    FOLLOW_WAIT = "Waiting for escorted victim to catch up"
+    FOLLOW_FAILED = "Victim following failed"
     EVACUATION_COMPLETE = "Evacuation complete"
     REPORT_IMMOBILE_VICTIM = "Reporting immobile victim"
     REPLAN = "Replanning evacuation route"
@@ -79,6 +81,9 @@ class MissionEvent(Enum):
     EXIT_CHECK_COMPLETED = "exit_check_completed"
     EXPLORATION_STALLED = "exploration_stalled"
     EXPLORATION_COMPLETED = "exploration_completed"
+    VICTIM_LAGGING = "victim_lagging"
+    VICTIM_CAUGHT_UP = "victim_caught_up"
+    VICTIM_FOLLOW_FAILED = "victim_follow_failed"
 
 
 class InvalidTransitionError(RuntimeError):
@@ -143,6 +148,16 @@ _TRANSITIONS: dict[MissionState, dict[MissionEvent, MissionState]] = {
         MissionEvent.EXIT_UNSAFE: MissionState.REPLAN,
         MissionEvent.EXIT_REACHED: MissionState.EVACUATION_COMPLETE,
         MissionEvent.EVACUATION_CONFIRMED: MissionState.EVACUATION_COMPLETE,
+        MissionEvent.VICTIM_LAGGING: MissionState.FOLLOW_WAIT,
+        MissionEvent.VICTIM_FOLLOW_FAILED: MissionState.FOLLOW_FAILED,
+    },
+    MissionState.FOLLOW_WAIT: {
+        MissionEvent.VICTIM_CAUGHT_UP: MissionState.ESCORT_VICTIM,
+        MissionEvent.VICTIM_FOLLOW_FAILED: MissionState.FOLLOW_FAILED,
+        MissionEvent.ACTIVE_PATH_INVALIDATED: MissionState.REPLAN,
+    },
+    MissionState.FOLLOW_FAILED: {
+        MissionEvent.RETRY_REQUESTED: MissionState.FOLLOW_WAIT,
     },
     MissionState.REPLAN: {
         MissionEvent.RETRY_REQUESTED: MissionState.PLAN_EVACUATION,
@@ -238,6 +253,9 @@ _DEFAULT_REASONS = {
     MissionEvent.EXPLORATION_TARGET_SELECTED: "next unchecked exit selected",
     MissionEvent.EXIT_CHECK_COMPLETED: "exit visit and safety check completed",
     MissionEvent.EXPLORATION_STALLED: "unchecked exits currently have no safe path",
+    MissionEvent.VICTIM_LAGGING: "victim exceeded the maximum following distance",
+    MissionEvent.VICTIM_CAUGHT_UP: "victim returned within the following resume distance",
+    MissionEvent.VICTIM_FOLLOW_FAILED: "victim failed to catch up after repeated guidance",
     MissionEvent.EXPLORATION_COMPLETED: "all exits have been directly checked",
 }
 

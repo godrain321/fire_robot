@@ -46,4 +46,11 @@ __all__ = [
     "is_opposite_direction",
     "ExplorationConfig", "ExplorationManager", "ExplorationPhase",
     "ExplorationPlan",
+    "FollowState", "FollowUpdate", "RobotPoseSample",
+    "VictimFollowingConfig", "VictimFollowingController",
+    "evacuation_success_ready",
 ]
+from .victim_following import (
+    FollowState, FollowUpdate, RobotPoseSample, VictimFollowingConfig,
+    VictimFollowingController, evacuation_success_ready,
+)

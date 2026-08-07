@@ -118,8 +118,13 @@ class VictimStatus(Enum):
     REACHED = "reached"
     WAITING = "waiting"
     MOVABLE = "movable"
+    READY_TO_FOLLOW = "ready_to_follow"
+    FOLLOWING = "following"
+    FOLLOW_WAIT = "follow_wait"
+    FOLLOW_FAILED = "follow_failed"
     IMMOBILE = "immobile"
     EVACUATING = "evacuating"
+    EVACUATED = "evacuated"
     RESCUED = "rescued"
     REPORTED = "reported"
 
@@ -130,9 +135,28 @@ _VICTIM_TRANSITIONS = {
     VictimStatus.APPROACHING: {VictimStatus.REACHED, VictimStatus.IMMOBILE},
     VictimStatus.REACHED: {VictimStatus.WAITING, VictimStatus.MOVABLE, VictimStatus.IMMOBILE},
     VictimStatus.WAITING: {VictimStatus.MOVABLE, VictimStatus.IMMOBILE},
-    VictimStatus.MOVABLE: {VictimStatus.EVACUATING, VictimStatus.IMMOBILE},
+    VictimStatus.MOVABLE: {
+        VictimStatus.READY_TO_FOLLOW, VictimStatus.EVACUATING,
+        VictimStatus.IMMOBILE,
+    },
+    VictimStatus.READY_TO_FOLLOW: {
+        VictimStatus.FOLLOWING, VictimStatus.IMMOBILE,
+    },
+    VictimStatus.FOLLOWING: {
+        VictimStatus.FOLLOW_WAIT, VictimStatus.FOLLOW_FAILED,
+        VictimStatus.EVACUATED, VictimStatus.RESCUED, VictimStatus.IMMOBILE,
+    },
+    VictimStatus.FOLLOW_WAIT: {
+        VictimStatus.FOLLOWING, VictimStatus.FOLLOW_FAILED,
+        VictimStatus.IMMOBILE,
+    },
+    VictimStatus.FOLLOW_FAILED: set(),
     VictimStatus.IMMOBILE: {VictimStatus.REPORTED},
-    VictimStatus.EVACUATING: {VictimStatus.RESCUED, VictimStatus.IMMOBILE},
+    VictimStatus.EVACUATING: {
+        VictimStatus.FOLLOWING, VictimStatus.EVACUATED,
+        VictimStatus.RESCUED, VictimStatus.IMMOBILE,
+    },
+    VictimStatus.EVACUATED: set(),
     VictimStatus.RESCUED: set(),
     VictimStatus.REPORTED: set(),
 }
@@ -148,6 +172,16 @@ class Victim:
     distance_from_robot_m: float | None = None
     assigned_exit_id: str | None = None
     following_robot: bool = False
+    current_grid_position: tuple[int, int] | None = None
+    follow_target_world: WorldPosition | None = None
+    follow_distance_m: float | None = None
+    follow_wait_active: bool = False
+    follow_wait_started_at: float | None = None
+    follow_reprompt_count: int = 0
+    follow_failed: bool = False
+    follow_failure_reason: str | None = None
+    evacuated_at: float | None = None
+    evacuation_success_reason: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -163,7 +197,12 @@ class Victim:
 
     @property
     def movable(self) -> bool | None:
-        if self.status in (VictimStatus.MOVABLE, VictimStatus.EVACUATING, VictimStatus.RESCUED):
+        if self.status in (
+            VictimStatus.MOVABLE, VictimStatus.READY_TO_FOLLOW,
+            VictimStatus.FOLLOWING, VictimStatus.FOLLOW_WAIT,
+            VictimStatus.EVACUATING, VictimStatus.EVACUATED,
+            VictimStatus.RESCUED,
+        ):
             return True
         if self.status in (VictimStatus.IMMOBILE, VictimStatus.REPORTED):
             return False
@@ -171,7 +210,7 @@ class Victim:
 
     @property
     def rescued(self) -> bool:
-        return self.status is VictimStatus.RESCUED
+        return self.status in (VictimStatus.EVACUATED, VictimStatus.RESCUED)
 
     def update_status(self, status: VictimStatus, *, sim_time: float | None = None) -> None:
         if not isinstance(status, VictimStatus):
@@ -183,7 +222,10 @@ class Victim:
             self.detected_at = None if sim_time is None else float(sim_time)
         if status is not VictimStatus.UNDETECTED:
             self.last_seen_at = None if sim_time is None else float(sim_time)
-        self.following_robot = status is VictimStatus.EVACUATING
+        self.following_robot = status in (
+            VictimStatus.FOLLOWING, VictimStatus.FOLLOW_WAIT,
+            VictimStatus.EVACUATING,
+        )
 
 
 class DynamicObstacleStatus(Enum):

@@ -277,6 +277,11 @@ class PygameSimulationViewer:
             f"Route failure: {snapshot.get('route_failure', 'none')}",
             f"Path O/C/F: {snapshot.get('path_simplification', 'N/A')}",
             f"Exit plan: {snapshot['exit_plan']}",
+            f"Victim state: {snapshot.get('victim_state', 'N/A')}",
+            f"Following: {snapshot.get('following_active', False)}",
+            f"Robot-victim: {snapshot.get('follow_distance', 'N/A')}",
+            f"Follow target: {snapshot.get('target_follow_distance', 'N/A')}",
+            f"Follow wait: {snapshot.get('follow_wait', False)}",
             "SPACE: pause/resume   ESC: quit",
         ]
         self.screen.blit(self.title_font.render("Simulation status", True, (245, 245, 245)), (x, y))
@@ -290,6 +295,7 @@ class PygameSimulationViewer:
         newly_observed_cells, snapshot, humans=(), exits=(), detected_ids=(),
         travel_history=(), return_path=(), blocked_return_grid=None,
         exit_evaluations=(), selected_exit_id=None, path_simplification=None,
+        victim_following=None,
     ) -> None:
         snapshot = dict(snapshot)
         snapshot["observed_ratio"] = float(belief.observed_mask.mean() * 100.0)
@@ -335,6 +341,32 @@ class PygameSimulationViewer:
         self._draw_travel_and_return(
             travel_history, return_path, blocked_return_grid
         )
+        if victim_following is not None and victim_following.position_world is not None:
+            history = [
+                self.transform.world_to_screen(item.x, item.y)
+                for item in victim_following.pose_history
+            ]
+            if len(history) >= 2:
+                self.pygame.draw.lines(
+                    self.screen, (100, 170, 255), False, history, 2
+                )
+            victim_point = self.transform.world_to_screen(
+                *victim_following.position_world
+            )
+            robot_point = self.transform.world_to_screen(state.x, state.y)
+            self.pygame.draw.line(
+                self.screen, (255, 180, 70), robot_point, victim_point, 2
+            )
+            if victim_following.target_world is not None:
+                target = self.transform.world_to_screen(
+                    *victim_following.target_world
+                )
+                self.pygame.draw.circle(self.screen, (255, 220, 40), target, 6, 2)
+            snapshot["victim_state"] = victim_following.state.name
+            snapshot["following_active"] = victim_following.active
+            snapshot["follow_distance"] = f"{math.dist((state.x, state.y), victim_following.position_world):.2f} m"
+            snapshot["target_follow_distance"] = f"{victim_following.config.target_follow_distance_m:.2f} m"
+            snapshot["follow_wait"] = victim_following.state.name == "FOLLOW_WAIT"
         self._draw_markers(
             state, start, goal, humans, exits, detected_ids,
             exit_evaluations, selected_exit_id,

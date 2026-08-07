@@ -139,6 +139,10 @@ class WorldState:
         self.exploration_interruptions: list[ExplorationInterruption] = []
         self.exploration_stalled = False
         self.exploration_stall_reason: str | None = None
+        self.active_following_victim_id: str | None = None
+        self.victim_following_controller = None
+        self.victim_following_config = None
+        self.victim_following_events: list[dict[str, Any]] = []
 
     @classmethod
     def from_scenario(cls, scenario: dict[str, Any], grid_map, config) -> "WorldState":
@@ -488,6 +492,66 @@ class WorldState:
                 raise ValueError(f"unknown victim field: {key}")
             setattr(victim, key, value)
 
+    def attach_victim_following(self, controller) -> None:
+        if controller.metadata != self.map_metadata:
+            raise ValueError("victim following metadata must match WorldState")
+        self.victim_following_controller = controller
+        self.victim_following_config = controller.config
+
+    def start_victim_following(self, victim_id: str) -> None:
+        victim = self.get_victim(victim_id)
+        if victim.movable is not True:
+            raise ValueError("only a movable victim may start following")
+        self.active_following_victim_id = victim_id
+        victim.current_grid_position = self.map_metadata.world_to_grid(
+            *victim.position_world
+        )
+
+    def update_victim_following(self, update, *, sim_time: float) -> None:
+        if self.active_following_victim_id is None:
+            raise RuntimeError("no active following victim")
+        victim = self.get_victim(self.active_following_victim_id)
+        col, row = self.validate_position(
+            update.position_world, label=f"victim {victim.victim_id} follow position"
+        )
+        victim.position_world = tuple(update.position_world)
+        victim.current_grid_position = (col, row)
+        victim.follow_target_world = update.target_world
+        victim.follow_distance_m = float(update.robot_victim_distance_m)
+        victim.follow_wait_active = update.state.value == "follow_wait"
+        victim.follow_wait_started_at = (
+            None if self.victim_following_controller is None
+            else self.victim_following_controller.wait_started_at
+        )
+        victim.follow_reprompt_count = (
+            0 if self.victim_following_controller is None
+            else self.victim_following_controller.reprompt_count
+        )
+        victim.follow_failed = update.state.value == "follow_failed"
+        victim.follow_failure_reason = (
+            None if self.victim_following_controller is None
+            else self.victim_following_controller.failure_reason
+        )
+        if update.event:
+            self.victim_following_events.append({
+                "event": update.event, "victim_id": victim.victim_id,
+                "sim_time": float(sim_time),
+                "distance_m": float(update.robot_victim_distance_m),
+            })
+
+    def complete_victim_following(self, victim_id: str, *, sim_time: float, reason: str) -> None:
+        victim = self.get_victim(victim_id)
+        if victim_id != self.active_following_victim_id:
+            raise ValueError("victim is not the active follower")
+        victim.evacuated_at = float(sim_time)
+        victim.evacuation_success_reason = str(reason)
+        victim.following_robot = False
+        victim.follow_wait_active = False
+        self.active_following_victim_id = None
+
+    def clear_victim_following(self) -> None:
+        self.active_following_victim_id = None
+
     def _obstacle_extent(self, obstacle: DynamicObstacle) -> tuple[float, float, float, float]:
         x, y = obstacle.position_world
         if obstacle.shape is DynamicObstacleShape.POINT:
@@ -667,6 +731,12 @@ class WorldState:
             "exploration_interruptions": self.exploration_interruptions,
             "exploration_stalled": self.exploration_stalled,
             "exploration_stall_reason": self.exploration_stall_reason,
+            "active_following_victim_id": self.active_following_victim_id,
+            "victim_following": (
+                None if self.victim_following_controller is None
+                else self.victim_following_controller.to_dict()
+            ),
+            "victim_following_events": self.victim_following_events,
             "static_obstacle_map": self.static_obstacle_map,
             "dynamic_obstacles": self.dynamic_obstacles,
             "exits": self.exits,
