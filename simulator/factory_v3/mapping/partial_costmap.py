@@ -28,6 +28,7 @@ class PartialCostmapConfig(FireCostmapConfig):
     gas_gaussian_sigma: float = 0.5
     selected_fds_start_time: float = 0.0
     simulation_dt: float = 0.1
+    render_fps: int = 60
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -53,6 +54,12 @@ class PartialCostmapConfig(FireCostmapConfig):
         for name, value in positive.items():
             if value <= 0.0:
                 raise ValueError(f"{name} must be positive")
+        if (
+            isinstance(self.render_fps, bool)
+            or not isinstance(self.render_fps, int)
+            or self.render_fps < 1
+        ):
+            raise ValueError("render_fps must be a positive integer")
 
 
 @dataclass(frozen=True)

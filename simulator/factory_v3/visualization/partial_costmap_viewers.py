@@ -191,7 +191,7 @@ class PygameSimulationViewer:
         self._screen_point_cache = {}
         self._text_surface_cache = {}
         self._last_render_pose = None
-        self.render_fps = 30
+        self.render_fps = int(getattr(config, "render_fps", 30))
         self.running = True
         self.paused = False
 

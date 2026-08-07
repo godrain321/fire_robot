@@ -21,6 +21,15 @@ robot_start:
   y: 16.0
   yaw_deg: -85.70
 
+# Motion remains simulated at 10 Hz. Rendering interpolates between those
+# poses independently, so increasing display FPS does not rerun sensors/A*.
+robot_motion:
+  linear_speed_mps: 1.3
+  angular_speed_deg_s: 120.0
+
+display:
+  render_fps: 60
+
 # The initial pose is hidden from the robot by known SLAM occupancy. The victim
 # then walks along the configured wall-side route until detected.
 humans:

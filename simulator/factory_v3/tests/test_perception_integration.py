@@ -116,13 +116,15 @@ def test_slam_and_costmap_surfaces_are_cached_by_revision(monkeypatch):
     viewer.close()
 
 
-def test_render_interpolates_three_frames_without_extra_simulation_updates(
+def test_render_interpolates_frames_without_extra_simulation_updates(
     monkeypatch,
 ):
     monkeypatch.setenv("SDL_VIDEODRIVER", "dummy")
     grid = GridMap((0, 1, 0, 1, 0, 1), [], [], 0.5, 0)
     viewer = PygameSimulationViewer(
-        grid, SimpleNamespace(base_cost=1.0, simulation_dt=0.1)
+        grid, SimpleNamespace(
+            base_cost=1.0, simulation_dt=0.1, render_fps=60,
+        )
     )
     rendered = []
     monkeypatch.setattr(
@@ -132,7 +134,9 @@ def test_render_interpolates_three_frames_without_extra_simulation_updates(
     monkeypatch.setattr(viewer.pygame.display, "flip", lambda: None)
     viewer._last_render_pose = (0.0, 0.0, 0.0)
     viewer.draw(None, SimpleNamespace(x=0.9, y=0.0, theta=0.0))
-    assert len(rendered) == 3
-    assert [item.x for item in rendered] == pytest.approx((0.3, 0.6, 0.9))
+    assert len(rendered) == 6
+    assert [item.x for item in rendered] == pytest.approx(
+        (0.15, 0.30, 0.45, 0.60, 0.75, 0.90)
+    )
     assert viewer._last_render_pose == (0.9, 0.0, 0.0)
     viewer.close()

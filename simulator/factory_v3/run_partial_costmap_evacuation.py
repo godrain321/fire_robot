@@ -183,6 +183,8 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         selected_fds_start_time=args.fds_start_time,
         simulation_dt=args.dt,
         robot_speed=args.robot_speed,
+        robot_angular_speed=math.radians(args.robot_angular_speed_deg),
+        render_fps=args.render_fps,
         gas_update_radius=args.gas_update_radius,
         use_inflation=not args.no_inflation,
         inflation_radius=args.inflation_radius,
@@ -1915,6 +1917,8 @@ def parse_args():
     parser.add_argument("--sensor-interval", type=float, default=0.25)
     parser.add_argument("--replan-interval", type=float, default=1.0)
     parser.add_argument("--robot-speed", type=float, default=1.3)
+    parser.add_argument("--robot-angular-speed-deg", type=float, default=None)
+    parser.add_argument("--render-fps", type=int, default=None)
     parser.add_argument("--unknown-penalty", type=float, default=2.0)
     parser.add_argument("--temperature-weight", type=float, default=8.0)
     parser.add_argument("--co-weight", type=float, default=8.0)
@@ -1960,6 +1964,20 @@ def apply_scenario_config(args):
         scenario["planner"]["inflation_radius_m"]
         if args.inflation_radius is None else args.inflation_radius
     )
+    motion_config = scenario.get("robot_motion", {})
+    if args.robot_angular_speed_deg is None:
+        args.robot_angular_speed_deg = float(
+            motion_config.get("angular_speed_deg_s", 120.0)
+        )
+    if args.robot_speed == 1.3:
+        args.robot_speed = float(motion_config.get("linear_speed_mps", 1.3))
+    display_config = scenario.get("display", {})
+    if args.render_fps is None:
+        args.render_fps = int(display_config.get("render_fps", 60))
+    if args.robot_angular_speed_deg <= 0.0:
+        raise ValueError("robot angular speed must be positive")
+    if args.render_fps < 1:
+        raise ValueError("render FPS must be a positive integer")
     args.humans = list(scenario["humans"])
     args.exits = list(scenario["exits"])
     args.human_detection_range = float(scenario["human_detection_range_m"])
