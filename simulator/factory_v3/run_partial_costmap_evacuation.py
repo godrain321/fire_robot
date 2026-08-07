@@ -29,7 +29,7 @@ from navigation.evacuation_strategy_selector import (
 )
 from navigation.travel_history import TravelHistory, TravelHistoryConfig
 from navigation.path_simplifier import (
-    PathSimplificationConfig, SafePathSimplifier,
+    PathSimplificationConfig, SafePathSimplifier, cells_touched_by_segment,
 )
 from planner.a_star import weighted_a_star_with_escape
 from planner.evacuation_planner import EvacuationPlanner, ExitSelectionConfig
@@ -274,6 +274,27 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     latest_newly_observed_cells: set[tuple[int, int]] = set()
     last_replan_reason = "none"
     last_route_environment_revision = world.environment_revision
+    monitored_route_average_cost: float | None = None
+
+    def remaining_route_average_cost(path_grid) -> float | None:
+        """Return mean finite cell cost for the active remaining route."""
+        waypoints = tuple(path_grid)
+        if not waypoints:
+            return None
+        cells = [waypoints[0]]
+        for start, end in zip(waypoints, waypoints[1:]):
+            for cell in cells_touched_by_segment(start, end):
+                if cells[-1] != cell:
+                    cells.append(cell)
+        values = []
+        for col, row in cells:
+            if not world.map_metadata.is_grid_position_in_bounds(col, row):
+                return None
+            value = float(belief.final_cost_map[row, col])
+            if not math.isfinite(value):
+                return None
+            values.append(value)
+        return float(np.mean(values))
 
     def activate_simplified_path(
         original_path_grid, *, goal_world, escape_path=(),
@@ -308,7 +329,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     def activate_replacement_route(replacement) -> bool:
         """Activate a Stage-6 replacement only after Stage-7 validation."""
         nonlocal goal, no_path_active, returning_to_entrance
-        nonlocal selected_exit, status
+        nonlocal selected_exit, status, monitored_route_average_cost
         goal = replacement.target_position_world
         simplified = activate_simplified_path(
             replacement.path_grid, goal_world=goal
@@ -356,6 +377,9 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             metrics.selected_exit = selected_exit
             returning_to_entrance = False
             status = f"EVACUATING VIA {selected_exit}"
+        monitored_route_average_cost = remaining_route_average_cost(
+            simplified.simplified_path_grid
+        )
         return True
     pygame_viewer = None
     thermal_viewer = None
@@ -415,6 +439,87 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             world.hazard_knowledge_decision = hazard_tracker.evaluate(
                 world.estimated_fire_map, evaluated_at=sim_elapsed
             )
+            # No-fire-information evacuation starts toward the shortest exit.
+            # As new observations arrive, compare the *remaining* route's mean
+            # cost with its previous observed value. A material increase stops
+            # motion before selecting another exit; tiny sensor fluctuations do
+            # not trigger replanning.
+            active_decision = world.active_route_decision
+            if (
+                active_decision is not None
+                and active_decision.strategy
+                is EvacuationStrategy.NEAREST_REACHABLE_EXIT
+                and world.active_route_valid
+                and world.active_path_simplification is not None
+            ):
+                remaining_for_cost = (
+                    world.active_path_simplification.simplified_path_grid[
+                        max(0, follower.waypoint_index - 1):
+                    ]
+                )
+                current_average_cost = remaining_route_average_cost(
+                    remaining_for_cost
+                )
+                previous_average_cost = monitored_route_average_cost
+                cost_cfg = strategy_selector.config
+                cost_increased = (
+                    current_average_cost is not None
+                    and previous_average_cost is not None
+                    and current_average_cost
+                    >= previous_average_cost * cost_cfg.route_cost_increase_ratio
+                    and current_average_cost - previous_average_cost
+                    >= cost_cfg.route_cost_min_absolute_increase
+                )
+                if cost_increased:
+                    reason = (
+                        "route_cost_increased: "
+                        f"{previous_average_cost:.3f}->"
+                        f"{current_average_cost:.3f}"
+                    )
+                    follower.clear()
+                    world.invalidate_active_route(reason)
+                    world.clear_active_evacuation_plan()
+                    mission.handle_event(
+                        MissionEvent.ACTIVE_PATH_INVALIDATED,
+                        sim_time=sim_elapsed, reason=reason,
+                    )
+                    no_path_active = True
+                    status = f"PATH_INVALIDATED: {reason}"
+                    if (
+                        replanning_config.enabled
+                        and world.route_replan_count
+                        < replanning_config.max_replan_attempts
+                    ):
+                        mission.handle_event(
+                            MissionEvent.REPLAN_REQUESTED,
+                            sim_time=sim_elapsed, reason=reason,
+                        )
+                        world.route_replan_count += 1
+                        replacement = strategy_selector.replan_to_safe_exit(
+                            world_state=world,
+                            current_position_world=(state.x, state.y),
+                            cost_map=belief.final_cost_map,
+                            costmap_revision=belief.revision,
+                            created_at=sim_elapsed,
+                            excluded_exit_ids=(active_decision.target_exit_id,),
+                        )
+                        if replacement.success:
+                            activate_replacement_route(replacement)
+                        else:
+                            mission.handle_event(
+                                MissionEvent.NO_SAFE_ROUTE_FOUND,
+                                sim_time=sim_elapsed,
+                                reason=replacement.failure_reason.value,
+                            )
+                            world.final_route_failure_reason = (
+                                replacement.failure_reason.value
+                            )
+                            status = (
+                                "NO_SAFE_ROUTE: "
+                                f"{replacement.failure_reason.value}"
+                            )
+                else:
+                    monitored_route_average_cost = current_average_cost
             if (
                 returning_by_history
                 and return_planner.config.validate_during_return
@@ -728,29 +833,36 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     MissionEvent.NO_HAZARD_INFORMATION, sim_time=sim_elapsed,
                 )
             if route_decision.success:
-                if route_decision.strategy is EvacuationStrategy.SAFE_EXIT_PLANNING:
+                if route_decision.strategy in (
+                    EvacuationStrategy.SAFE_EXIT_PLANNING,
+                    EvacuationStrategy.NEAREST_REACHABLE_EXIT,
+                ):
                     evacuation_plan = route_decision.evacuation_plan
-                    selected = evacuation_plan.selected_evaluation
+                    selected = (
+                        None if evacuation_plan is None
+                        else evacuation_plan.selected_evaluation
+                    )
                     selected_exit = route_decision.target_exit_id
                     metrics.selected_exit = selected_exit
                     goal = route_decision.target_position_world
                     mission.handle_event(
                         MissionEvent.SAFE_EXIT_SELECTED,
                         exit_id=selected_exit, exit_position=goal,
-                        selection_reason=evacuation_plan.selection_reason,
+                        selection_reason=route_decision.reasons[0],
                         sim_time=sim_elapsed,
                     )
-                    world.update_exit_status(
-                        selected_exit, ExitStatus.USABLE,
-                        sim_time=sim_elapsed,
-                        temperature_c=selected.exit_temperature_c
-                        if selected.exit_temperature_c is not None else np.nan,
-                        co_ppm=selected.exit_co_ppm
-                        if selected.exit_co_ppm is not None else np.nan,
-                        path_cost=selected.accumulated_risk_cost,
-                    )
+                    if selected is not None:
+                        world.update_exit_status(
+                            selected_exit, ExitStatus.USABLE,
+                            sim_time=sim_elapsed,
+                            temperature_c=selected.exit_temperature_c
+                            if selected.exit_temperature_c is not None else np.nan,
+                            co_ppm=selected.exit_co_ppm
+                            if selected.exit_co_ppm is not None else np.nan,
+                            path_cost=selected.accumulated_risk_cost,
+                        )
                     simplified = activate_simplified_path(
-                        evacuation_plan.path_grid, goal_world=goal
+                        route_decision.path_grid, goal_world=goal
                     )
                     if simplified is None:
                         mission.handle_event(
@@ -771,8 +883,11 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                             exit_id=selected_exit,
                             exit_position=goal,
                             path=simplified.simplified_path_grid,
-                            selection_reason=evacuation_plan.selection_reason,
+                            selection_reason=route_decision.reasons[0],
                             sim_time=sim_elapsed,
+                        )
+                        monitored_route_average_cost = remaining_route_average_cost(
+                            simplified.simplified_path_grid
                         )
                         last_replan_time = sim_elapsed
                         last_replan_position = (state.x, state.y)

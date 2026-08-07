@@ -43,7 +43,7 @@ def setup_system():
     return world, history, selector, np.ones((6, 6))
 
 
-def test_no_fire_information_returns_via_actual_history_without_mutation():
+def test_no_fire_information_selects_nearest_reachable_exit_without_history_mutation():
     world, history, selector, costs = setup_system()
     before = history.get_points()
     decision = selector.select_initial_route(
@@ -52,9 +52,9 @@ def test_no_fire_information_returns_via_actual_history_without_mutation():
         cost_map=costs, costmap_revision=3, created_at=5,
     )
     assert decision.success
-    assert decision.strategy is EvacuationStrategy.RETURN_VIA_TRAVEL_HISTORY
-    assert decision.target_exit_id == "ENTRY"
-    assert decision.path_grid[-1] == (0, 0)
+    assert decision.strategy is EvacuationStrategy.NEAREST_REACHABLE_EXIT
+    assert decision.target_exit_id == "NEAR"
+    assert decision.path_grid[-1] == (3, 0)
     assert history.get_points() == before
     json.dumps(decision.to_dict())
 
@@ -97,6 +97,16 @@ def test_all_routes_failed_never_selects_default_exit():
     assert decision.target_exit_id is None
 
 
+def test_cost_increase_replan_can_exclude_current_exit():
+    world, _, selector, costs = setup_system()
+    decision = selector.replan_to_safe_exit(
+        world_state=world, current_position_world=(2, 0), cost_map=costs,
+        costmap_revision=9, created_at=9, excluded_exit_ids=("NEAR",),
+    )
+    assert decision.success
+    assert decision.target_exit_id == "FAR"
+
+
 def test_path_validation_finds_dynamic_obstacle():
     from world import DynamicObstacle, DynamicObstacleStatus
     world, _, selector, costs = setup_system()
@@ -116,6 +126,10 @@ def test_settings_reject_invalid_values():
         EvacuationRouteSelectionConfig(
             no_fire_information_strategy="nearest_exit"
         )
+    with pytest.raises(ValueError):
+        EvacuationRouteSelectionConfig(route_cost_increase_ratio=1.0)
+    with pytest.raises(ValueError):
+        EvacuationRouteSelectionConfig(route_cost_min_absolute_increase=-0.1)
     with pytest.raises(ValueError):
         ReplanningConfig(max_replan_attempts=-1)
     with pytest.raises(ValueError):

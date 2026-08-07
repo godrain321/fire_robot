@@ -22,17 +22,15 @@ def ready(manager):
     manager.handle_event(MissionEvent.VICTIM_READY_FOR_EVACUATION)
 
 
-def test_mission_no_hazard_return_and_invalidated_replan_flow():
+def test_mission_no_hazard_routes_to_exit_evaluation():
     manager = MissionManager()
     ready(manager)
     assert manager.current_state is MissionState.EVALUATING_HAZARD_INFORMATION
     manager.handle_event(MissionEvent.NO_HAZARD_INFORMATION)
-    manager.handle_event(MissionEvent.RETURN_PATH_CREATED, path=[(1, 1), (0, 0)])
-    assert manager.current_state is MissionState.RETURNING_BY_HISTORY
-    manager.handle_event(MissionEvent.RETURN_PATH_INVALIDATED)
-    manager.handle_event(MissionEvent.REPLAN_REQUESTED)
-    manager.handle_event(MissionEvent.ENTRANCE_ROUTE_CREATED, path=[(1, 1), (0, 0)])
-    assert manager.current_state is MissionState.RETURNING_TO_ENTRANCE
+    assert manager.current_state is MissionState.EVALUATING_EXITS
+    manager.handle_event(MissionEvent.SAFE_EXIT_SELECTED, exit_id="E1")
+    manager.handle_event(MissionEvent.EVACUATION_PLAN_CREATED, path=[(1, 1)])
+    assert manager.current_state is MissionState.ESCORT_VICTIM
 
 
 def test_mission_hazard_exit_and_no_safe_route_flows():
@@ -65,6 +63,7 @@ def test_stage6_yaml_sections_load():
     scenario = yaml.safe_load((BASE / "config/evacuation.yaml").read_text())
     assert scenario["mission_entry_id"] == "MISSION_ENTRY"
     assert scenario["evacuation_route_selection"]["fire_information_strategy"] == "evaluate_all_exits"
+    assert scenario["evacuation_route_selection"]["no_fire_information_strategy"] == "nearest_reachable_exit"
     assert scenario["replanning"]["max_replan_attempts"] == 5
 
 

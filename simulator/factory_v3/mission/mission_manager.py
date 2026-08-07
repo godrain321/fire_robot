@@ -168,7 +168,7 @@ _TRANSITIONS: dict[MissionState, dict[MissionEvent, MissionState]] = {
     },
     MissionState.EVALUATING_HAZARD_INFORMATION: {
         MissionEvent.HAZARD_INFORMATION_AVAILABLE: MissionState.EVALUATING_EXITS,
-        MissionEvent.NO_HAZARD_INFORMATION: MissionState.PLAN_RETURN_BY_HISTORY,
+        MissionEvent.NO_HAZARD_INFORMATION: MissionState.EVALUATING_EXITS,
         MissionEvent.NO_SAFE_ROUTE_FOUND: MissionState.NO_SAFE_ROUTE,
     },
     MissionState.REPLANNING_TO_ENTRANCE: {

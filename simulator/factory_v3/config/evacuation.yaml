@@ -73,10 +73,14 @@ exit_selection:
 mission_entry_id: MISSION_ENTRY
 evacuation_route_selection:
   enabled: true
-  no_fire_information_strategy: return_via_travel_history
+  # With no fire evidence, start toward the shortest reachable exit and use
+  # observations gathered in motion to decide whether to change exits.
+  no_fire_information_strategy: nearest_reachable_exit
   fire_information_strategy: evaluate_all_exits
   prefer_original_entrance_on_return_failure: true
   evaluate_alternative_exits_on_entrance_failure: true
+  route_cost_increase_ratio: 1.10
+  route_cost_min_absolute_increase: 0.25
 
 path_validation:
   validate_on_costmap_revision: true
