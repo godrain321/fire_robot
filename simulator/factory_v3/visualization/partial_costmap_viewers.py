@@ -174,6 +174,12 @@ class PygameSimulationViewer:
             perception_display_config or PerceptionMapDisplayConfig()
         )
         self.overlay_config = overlay_config or MapOverlayConfig()
+        self._grid_surface_rect = self._make_grid_surface_rect()
+        self._static_slam_surface = self._make_static_slam_surface()
+        self._costmap_surface = None
+        self._costmap_surface_revision = None
+        self._costmap_surface_build_count = 0
+        self._mini_surface_cache = {}
         self.running = True
         self.paused = False
 
@@ -212,58 +218,97 @@ class PygameSimulationViewer:
         """Keep inflated planner-static cells out of the SLAM wall display."""
         return bool(blocked and not planner_static)
 
-    def _draw_belief_cells(self, belief):
-        pygame = self.pygame
+    def _make_grid_surface_rect(self):
+        half = self.grid_map.resolution / 2.0
+        left, top = self.transform.world_to_screen(
+            self.grid_map.x_min - half, self.grid_map.y_max + half
+        )
+        right, bottom = self.transform.world_to_screen(
+            self.grid_map.x_max + half, self.grid_map.y_min - half
+        )
+        return self.pygame.Rect(
+            min(left, right), min(top, bottom),
+            max(1, abs(right - left)), max(1, abs(bottom - top)),
+        )
+
+    def _surface_from_rgb_yx(self, rgb_yx, size):
+        """Convert map[y,x,RGB] to a y-flipped, scaled Pygame Surface."""
+        values = np.asarray(rgb_yx, dtype=np.uint8)
+        expected = (self.grid_map.height, self.grid_map.width, 3)
+        if values.shape != expected:
+            raise ValueError(f"RGB map shape={values.shape}, expected={expected}")
+        pixels_xy = np.ascontiguousarray(np.flipud(values).transpose(1, 0, 2))
+        surface = self.pygame.surfarray.make_surface(pixels_xy)
+        return self.pygame.transform.scale(surface, size)
+
+    def _make_static_slam_surface(self):
+        """Build the immutable non-inflated SLAM wall layer once."""
+        transparent_key = (1, 2, 3)
+        rgb = np.empty(
+            (self.grid_map.height, self.grid_map.width, 3), dtype=np.uint8
+        )
+        rgb[:] = transparent_key
+        rgb[self.display_static_obstacle_map] = self.STATIC
+        surface = self._surface_from_rgb_yx(rgb, self._grid_surface_rect.size)
+        surface.set_colorkey(transparent_key)
+        return surface
+
+    def _belief_rgb_array(self, belief):
+        """Vectorize belief classification without mutating planner arrays."""
         cfg = self.perception_display_config
-        finite = belief.final_cost_map[
-            np.isfinite(belief.final_cost_map) & ~belief.blocked_mask
-        ]
+        costs = np.asarray(belief.final_cost_map, dtype=float)
+        observed = np.asarray(belief.observed_mask, dtype=bool)
+        blocked = np.asarray(belief.blocked_mask, dtype=bool)
+        planner_static = np.asarray(belief.static_obstacle_map, dtype=bool)
+        expected = (self.grid_map.height, self.grid_map.width)
+        if any(item.shape != expected for item in (
+            costs, observed, blocked, planner_static,
+        )):
+            raise ValueError("belief display layers must match the grid shape")
+
+        finite = costs[np.isfinite(costs) & ~blocked]
         base = float(self.config.base_cost)
-        cost_max = max(float(finite.max()) if finite.size else base + 1.0, base + 1e-9)
-        for gy in range(self.grid_map.height):
-            for gx in range(self.grid_map.width):
-                rect = self.transform.grid_rect(gx, gy)
-                value = belief.final_cost_map[gy, gx]
-                normalized = 1.0 if not np.isfinite(value) else float(np.clip(
-                    (value - base) / max(cost_max - base, 1e-9), 0.0, 1.0
-                ))
-                color = cfg.color_for(
-                    observed=bool(belief.observed_mask[gy, gx]),
-                    # Planner static occupancy is inflated for robot safety.
-                    # Do not draw that inflation as wall geometry: the exact
-                    # non-inflated SLAM occupancy is rendered in _draw_blocked.
-                    blocked=self.perception_blocked_overlay(
-                        belief.blocked_mask[gy, gx],
-                        belief.static_obstacle_map[gy, gx],
-                    ),
-                    normalized_cost=normalized,
-                )
-                pygame.draw.rect(self.screen, color, rect)
+        cost_max = max(
+            float(finite.max()) if finite.size else base + 1.0,
+            base + 1e-9,
+        )
+        normalized = np.ones(expected, dtype=float)
+        finite_cells = np.isfinite(costs)
+        normalized[finite_cells] = np.clip(
+            (costs[finite_cells] - base) / max(cost_max - base, 1e-9),
+            0.0, 1.0,
+        )
+
+        rgb = np.empty(expected + (3,), dtype=np.uint8)
+        rgb[:] = cfg.unknown_color
+        safe = observed & (normalized <= cfg.safe_cost_max)
+        caution = observed & (normalized > cfg.safe_cost_max) & (
+            normalized <= cfg.caution_cost_max
+        )
+        danger = observed & (normalized > cfg.caution_cost_max)
+        rgb[safe] = cfg.safe_color
+        rgb[caution] = cfg.caution_color
+        rgb[danger] = cfg.danger_color
+        rgb[blocked & ~planner_static] = cfg.blocked_color
+        if self.overlay_config.show_dynamic_obstacles:
+            rgb[np.asarray(belief.dynamic_obstacle_map, dtype=bool)] = (
+                cfg.dynamic_obstacle_color
+            )
+        return rgb
+
+    def _draw_belief_cells(self, belief):
+        if self._costmap_surface_revision != belief.revision:
+            self._costmap_surface = self._surface_from_rgb_yx(
+                self._belief_rgb_array(belief), self._grid_surface_rect.size
+            )
+            self._costmap_surface_revision = belief.revision
+            self._costmap_surface_build_count += 1
+            self._mini_surface_cache.clear()
+        self.screen.blit(self._costmap_surface, self._grid_surface_rect)
 
     def _draw_blocked(self, belief):
-        pygame = self.pygame
-        for gy in range(self.grid_map.height):
-            for gx in range(self.grid_map.width):
-                rect = self.transform.grid_rect(gx, gy)
-                if self.display_static_obstacle_map[gy, gx]:
-                    pygame.draw.rect(self.screen, self.STATIC, rect)
-                elif (
-                    belief.blocked_mask[gy, gx]
-                    and not belief.static_obstacle_map[gy, gx]
-                ):
-                    pygame.draw.rect(self.screen, self.BLOCKED, rect)
-                if (
-                    self.overlay_config.show_dynamic_obstacles
-                    # Display only cells directly attributed to a perceived
-                    # obstacle. Inflation remains active for planning safety
-                    # but is intentionally not drawn as discovered geometry.
-                    and belief.dynamic_obstacle_map[gy, gx]
-                ):
-                    pygame.draw.rect(
-                        self.screen,
-                        self.perception_display_config.dynamic_obstacle_color,
-                        rect, 2,
-                    )
+        # Exact SLAM geometry is immutable and was rasterized once in __init__.
+        self.screen.blit(self._static_slam_surface, self._grid_surface_rect)
 
     def _draw_sensor_area(self, state, camera, newly_observed_cells, gas_radius):
         pygame = self.pygame
@@ -383,29 +428,32 @@ class PygameSimulationViewer:
                 (point[0] + 10, point[1] - 8),
             )
 
-    def _draw_mini_layer(self, array, rect, title, blocked=None):
+    def _draw_mini_layer(
+        self, array, rect, title, blocked=None, *, revision=None,
+    ):
         pygame = self.pygame
         pygame.draw.rect(self.screen, (48, 52, 58), rect)
         values = np.asarray(array, dtype=float)
-        finite = values[np.isfinite(values)]
-        maximum = max(float(finite.max()) if finite.size else 1.0, 1e-9)
-        cell_w = rect.width / values.shape[1]
-        cell_h = rect.height / values.shape[0]
-        for gy in range(values.shape[0]):
-            for gx in range(values.shape[1]):
-                if blocked is not None and blocked[gy, gx]:
-                    color = self.BLOCKED
-                elif not np.isfinite(values[gy, gx]):
-                    color = self.STATIC
-                else:
-                    ratio = float(np.clip(values[gy, gx] / maximum, 0.0, 1.0))
-                    color = (int(255 * ratio), int(170 * (1 - ratio)), 45)
-                x = rect.x + int(gx * cell_w)
-                y = rect.bottom - int((gy + 1) * cell_h)
-                pygame.draw.rect(
-                    self.screen, color,
-                    pygame.Rect(x, y, max(1, int(cell_w + 1)), max(1, int(cell_h + 1))),
-                )
+        cache_key = (title, revision)
+        surface = self._mini_surface_cache.get(cache_key)
+        if surface is None:
+            finite = values[np.isfinite(values)]
+            maximum = max(float(finite.max()) if finite.size else 1.0, 1e-9)
+            ratio = np.zeros(values.shape, dtype=float)
+            finite_mask = np.isfinite(values)
+            ratio[finite_mask] = np.clip(
+                values[finite_mask] / maximum, 0.0, 1.0
+            )
+            rgb = np.empty(values.shape + (3,), dtype=np.uint8)
+            rgb[..., 0] = (255 * ratio).astype(np.uint8)
+            rgb[..., 1] = (170 * (1.0 - ratio)).astype(np.uint8)
+            rgb[..., 2] = 45
+            rgb[~finite_mask] = self.STATIC
+            if blocked is not None:
+                rgb[np.asarray(blocked, dtype=bool)] = self.BLOCKED
+            surface = self._surface_from_rgb_yx(rgb, rect.size)
+            self._mini_surface_cache[cache_key] = surface
+        self.screen.blit(surface, rect)
         self.screen.blit(self.small_font.render(title, True, (240, 240, 240)),
                          (rect.x, rect.y - 18))
 
@@ -578,19 +626,22 @@ class PygameSimulationViewer:
         self._draw_mini_layer(
             belief.temperature_cost_map,
             self.pygame.Rect(770, 55, 220, 205), "Temperature cost",
+            revision=belief.revision,
         )
         self._draw_mini_layer(
             belief.co_cost_map,
             self.pygame.Rect(1035, 55, 220, 205), "CO cost",
+            revision=belief.revision,
         )
         self._draw_mini_layer(
             belief.estimated_fire_cost_map,
             self.pygame.Rect(770, 340, 220, 205), "Estimated fire cost",
+            revision=belief.revision,
         )
         self._draw_mini_layer(
             belief.final_cost_map,
             self.pygame.Rect(1035, 340, 220, 205), "Final costmap",
-            blocked=belief.blocked_mask,
+            blocked=belief.blocked_mask, revision=belief.revision,
         )
         self._draw_status(snapshot)
         self.pygame.display.flip()

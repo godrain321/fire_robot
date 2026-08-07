@@ -1,10 +1,12 @@
 import inspect
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import yaml
 
 from mapping.dynamic_obstacle_mapping import DynamicObstacleMappingConfig
+from mapping.grid_map import GridMap
 from navigation.exit_blockage import ExitBlockageConfig
 from planner.evacuation_planner import EvacuationPlanner, ExitSelectionConfig
 from planner.exit_evaluator import ExitEvaluation
@@ -64,7 +66,7 @@ def test_factory_perception_configuration_loads_and_matches_planner_inflation():
 def test_main_view_uses_robot_belief_and_mapper_has_no_ground_truth_input():
     import mapping.dynamic_obstacle_mapping as mapping_module
 
-    draw_source = inspect.getsource(PygameSimulationViewer._draw_belief_cells)
+    draw_source = inspect.getsource(PygameSimulationViewer._belief_rgb_array)
     mapper_source = inspect.getsource(mapping_module)
     assert "belief.final_cost_map" in draw_source
     assert "GroundTruth" not in mapper_source
@@ -72,6 +74,35 @@ def test_main_view_uses_robot_belief_and_mapper_has_no_ground_truth_input():
 
 
 def test_dynamic_overlay_draws_only_directly_observed_obstacle_cells():
-    draw_source = inspect.getsource(PygameSimulationViewer._draw_blocked)
+    draw_source = inspect.getsource(PygameSimulationViewer._belief_rgb_array)
     assert "belief.dynamic_obstacle_map" in draw_source
     assert "belief.dynamic_inflated_obstacle_map" not in draw_source
+
+
+def test_slam_and_costmap_surfaces_are_cached_by_revision(monkeypatch):
+    monkeypatch.setenv("SDL_VIDEODRIVER", "dummy")
+    grid = GridMap((0, 1, 0, 1, 0, 1), [], [], 0.5, 0)
+    config = SimpleNamespace(base_cost=1.0, simulation_dt=0.1)
+    viewer = PygameSimulationViewer(grid, config)
+    shape = (grid.height, grid.width)
+    belief = SimpleNamespace(
+        revision=0,
+        final_cost_map=np.ones(shape),
+        observed_mask=np.zeros(shape, dtype=bool),
+        blocked_mask=np.zeros(shape, dtype=bool),
+        static_obstacle_map=np.zeros(shape, dtype=bool),
+        dynamic_obstacle_map=np.zeros(shape, dtype=bool),
+    )
+    static_surface = viewer._static_slam_surface
+    viewer._draw_belief_cells(belief)
+    first_cost_surface = viewer._costmap_surface
+    assert viewer._costmap_surface_build_count == 1
+    viewer._draw_belief_cells(belief)
+    assert viewer._costmap_surface is first_cost_surface
+    assert viewer._static_slam_surface is static_surface
+    assert viewer._costmap_surface_build_count == 1
+    belief.revision = 1
+    viewer._draw_belief_cells(belief)
+    assert viewer._costmap_surface is not first_cost_surface
+    assert viewer._costmap_surface_build_count == 2
+    viewer.close()
