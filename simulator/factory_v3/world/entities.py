@@ -27,6 +27,35 @@ class ExitStatus(Enum):
     DANGEROUS = "dangerous"
 
 
+class ExitVisitStatus(Enum):
+    """Direct exploration visit state, independent of safety assessment."""
+
+    UNCHECKED = "unchecked"
+    CHECKED = "checked"
+
+
+@dataclass(frozen=True)
+class ExitCheckRecord:
+    exit_id: str
+    visit_status: ExitVisitStatus
+    safety_status: ExitStatus
+    checked_at: float
+    costmap_revision: int
+    reason: str
+
+
+@dataclass(frozen=True)
+class ExplorationInterruption:
+    interrupted_at: float
+    reason: str
+    victim_id: str
+    robot_pose_world: tuple[float, float, float]
+    target_exit_id: str | None
+    active_path_grid: tuple[tuple[int, int], ...]
+    costmap_revision: int
+    resume_required: bool
+
+
 @dataclass(frozen=True)
 class ExitStatusChange:
     previous: ExitStatus

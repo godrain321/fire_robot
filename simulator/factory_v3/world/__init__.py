@@ -5,7 +5,7 @@ from .entities import (
     DynamicObstacleShape,
     DynamicObstacleStatus,
     Exit,
-    ExitStatus,
+    ExitCheckRecord, ExitStatus, ExitVisitStatus, ExplorationInterruption,
     Victim,
     VictimStatus,
 )
@@ -14,6 +14,7 @@ from .world_state import WorldState
 
 __all__ = [
     "DynamicObstacle", "DynamicObstacleShape", "DynamicObstacleStatus",
-    "EstimatedFireMap", "Exit", "ExitStatus", "GroundTruthFireMap",
+    "EstimatedFireMap", "Exit", "ExitCheckRecord", "ExitStatus",
+    "ExitVisitStatus", "ExplorationInterruption", "GroundTruthFireMap",
     "MapMetadata", "Victim", "VictimStatus", "WorldState",
 ]

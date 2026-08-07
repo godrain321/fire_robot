@@ -18,6 +18,8 @@ class MissionState(Enum):
     """Internal states; enum values are stable log/display labels."""
 
     SEARCH_EXITS = "Searching exits and victims"
+    EXPLORATION_STALLED = "Exit exploration stalled"
+    EXPLORATION_COMPLETE = "All exits explored"
     APPROACH_VICTIM = "Approaching victim"
     ANNOUNCE_EVACUATION = "Announcing evacuation guidance"
     PLAN_EVACUATION = "Planning evacuation"
@@ -73,6 +75,10 @@ class MissionEvent(Enum):
     NO_SAFE_ROUTE_FOUND = "no_safe_route_found"
     MISSION_ABORTED = "mission_aborted"
     ERROR_OCCURRED = "error_occurred"
+    EXPLORATION_TARGET_SELECTED = "exploration_target_selected"
+    EXIT_CHECK_COMPLETED = "exit_check_completed"
+    EXPLORATION_STALLED = "exploration_stalled"
+    EXPLORATION_COMPLETED = "exploration_completed"
 
 
 class InvalidTransitionError(RuntimeError):
@@ -95,6 +101,17 @@ class StateTransition:
 _TRANSITIONS: dict[MissionState, dict[MissionEvent, MissionState]] = {
     MissionState.SEARCH_EXITS: {
         MissionEvent.VICTIM_DETECTED: MissionState.APPROACH_VICTIM,
+        MissionEvent.EXPLORATION_TARGET_SELECTED: MissionState.SEARCH_EXITS,
+        MissionEvent.EXIT_CHECK_COMPLETED: MissionState.SEARCH_EXITS,
+        MissionEvent.EXPLORATION_STALLED: MissionState.EXPLORATION_STALLED,
+        MissionEvent.EXPLORATION_COMPLETED: MissionState.EXPLORATION_COMPLETE,
+    },
+    MissionState.EXPLORATION_STALLED: {
+        MissionEvent.RETRY_REQUESTED: MissionState.SEARCH_EXITS,
+        MissionEvent.VICTIM_DETECTED: MissionState.APPROACH_VICTIM,
+    },
+    MissionState.EXPLORATION_COMPLETE: {
+        MissionEvent.SEARCH_RESUMED: MissionState.SEARCH_EXITS,
     },
     MissionState.APPROACH_VICTIM: {
         MissionEvent.VICTIM_REACHED: MissionState.ANNOUNCE_EVACUATION,
@@ -218,6 +235,10 @@ _DEFAULT_REASONS = {
     MissionEvent.NO_SAFE_ROUTE_FOUND: "entry and registered exits have no safe route",
     MissionEvent.MISSION_ABORTED: "mission aborted by caller",
     MissionEvent.ERROR_OCCURRED: "mission error reported by caller",
+    MissionEvent.EXPLORATION_TARGET_SELECTED: "next unchecked exit selected",
+    MissionEvent.EXIT_CHECK_COMPLETED: "exit visit and safety check completed",
+    MissionEvent.EXPLORATION_STALLED: "unchecked exits currently have no safe path",
+    MissionEvent.EXPLORATION_COMPLETED: "all exits have been directly checked",
 }
 
 

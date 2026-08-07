@@ -21,7 +21,6 @@ humans:
 dynamic_obstacles: []
 human_detection_range_m: 10.0
 victim_approach_distance_m: 1.0
-search_waypoint: {x: 16.0, y: 15.0}
 
 mission:
   # victim_reached_distance_m reuses victim_approach_distance_m above.
@@ -69,9 +68,21 @@ exit_selection:
   final_tie_breaker: exit_id
   float_tolerance: 1.0e-6
 
-# The mission entry position is robot_start; it is not inferred from the
-# nearest exit. Fire thresholds reuse PartialCostmapConfig (60 C, 1600 ppm).
-mission_entry_id: MISSION_ENTRY
+# Exploration starts at robot_start and resumes at the robot's actual pose.
+# Entrance return is a separate completion policy and remains disabled until
+# an explicit entrance exit ID is configured.
+exploration:
+  enabled: true
+  start_after_evacuation: true
+  use_current_robot_pose_as_start: true
+  teleport_to_entrance_on_start: false
+  select_exit_by_astar_path_length: true
+  reselect_after_each_exit_check: true
+  resume_after_victim_evacuation: true
+  replan_from_current_pose_on_resume: true
+  return_to_entrance_when_complete: false
+  return_entrance_exit_id: null
+
 # These thresholds classify whether the robot has meaningful fire evidence.
 # They are intentionally higher than normal ambient readings and lower than
 # the hard movement blocks (60 C and 1600 ppm).

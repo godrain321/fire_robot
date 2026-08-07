@@ -12,7 +12,8 @@ import numpy as np
 
 from .entities import (
     DynamicObstacle, DynamicObstacleShape, DynamicObstacleStatus,
-    Exit, ExitStatus, Victim, VictimStatus,
+    Exit, ExitCheckRecord, ExitStatus, ExitVisitStatus,
+    ExplorationInterruption, Victim, VictimStatus,
 )
 from .fire_maps import EstimatedFireMap, GroundTruthFireMap, MapMetadata
 
@@ -119,6 +120,25 @@ class WorldState:
         self.last_exit_switch_at: float | None = None
         self.exit_switch_cooldown_until: float | None = None
         self.last_exit_switch_validation: str | None = None
+        self.initial_robot_pose_world: tuple[float, float, float] | None = None
+        self.exploration_entry_pose_world: tuple[float, float, float] | None = None
+        self.exploration_resume_pose_world: tuple[float, float, float] | None = None
+        self.robot_grid_position: tuple[int, int] | None = None
+        self.current_exploration_target_exit_id: str | None = None
+        self.exploration_plan_start_world: tuple[float, float] | None = None
+        self.exploration_exit_path_lengths_m: dict[str, float] = {}
+        self.exploration_costmap_revision: int | None = None
+        self.exploration_environment_revision: int | None = None
+        self.exploration_phase: str | None = None
+        self.exploration_return_target_exit_id: str | None = None
+        self.exploration_return_to_entrance_enabled = False
+        self.active_exploration_plan = None
+        self.exit_visit_status: dict[str, ExitVisitStatus] = {}
+        self.exit_check_history: list[ExitCheckRecord] = []
+        self.exit_reachability_by_revision: dict[str, dict[str, Any]] = {}
+        self.exploration_interruptions: list[ExplorationInterruption] = []
+        self.exploration_stalled = False
+        self.exploration_stall_reason: str | None = None
 
     @classmethod
     def from_scenario(cls, scenario: dict[str, Any], grid_map, config) -> "WorldState":
@@ -180,6 +200,108 @@ class WorldState:
         if self.mission_start_position_world is None:
             self.mission_start_position_world = self.mission_entry_position_world
 
+    def set_initial_robot_pose(self, position_world, yaw_rad: float) -> None:
+        col, row = self.validate_position(position_world, label="initial robot pose")
+        if not math.isfinite(float(yaw_rad)):
+            raise ValueError("initial robot yaw must be finite")
+        self.initial_robot_pose_world = (
+            float(position_world[0]), float(position_world[1]), float(yaw_rad)
+        )
+        self.mission_start_position_world = self.initial_robot_pose_world[:2]
+        self.robot_position_world = self.initial_robot_pose_world[:2]
+        self.robot_grid_position = (col, row)
+
+    def record_exploration_plan(self, plan, *, yaw_rad: float) -> None:
+        if not plan.success:
+            raise ValueError("cannot activate an unsuccessful exploration plan")
+        pose = (
+            float(plan.start_position_world[0]),
+            float(plan.start_position_world[1]), float(yaw_rad),
+        )
+        if plan.phase.value == "initial" and self.exploration_entry_pose_world is None:
+            self.exploration_entry_pose_world = pose
+        elif plan.phase.value == "resumed_after_evacuation":
+            self.exploration_resume_pose_world = pose
+        self.current_exploration_target_exit_id = plan.target_exit_id
+        self.exploration_plan_start_world = tuple(plan.start_position_world)
+        self.exploration_exit_path_lengths_m = dict(plan.exit_path_lengths_m)
+        self.exploration_costmap_revision = int(plan.costmap_revision)
+        self.exploration_environment_revision = self.environment_revision
+        self.exploration_phase = plan.phase.value
+        self.active_exploration_plan = plan
+
+    def configure_exploration_return(
+        self, *, enabled: bool, entrance_exit_id: str | None,
+    ) -> None:
+        if enabled and entrance_exit_id is None:
+            raise ValueError("enabled exploration return requires an entrance exit ID")
+        if entrance_exit_id is not None:
+            self.get_exit(entrance_exit_id)
+        self.exploration_return_to_entrance_enabled = bool(enabled)
+        self.exploration_return_target_exit_id = entrance_exit_id
+
+    def clear_active_exploration_plan(self) -> None:
+        self.active_exploration_plan = None
+        self.current_exploration_target_exit_id = None
+
+    def get_unchecked_exits(self) -> tuple[Exit, ...]:
+        return tuple(
+            item for item in self.exits.values()
+            if self.exit_visit_status[item.exit_id] is ExitVisitStatus.UNCHECKED
+        )
+
+    def record_exploration_reachability(
+        self, evaluations, *, costmap_revision: int, evaluated_at: float,
+    ) -> None:
+        for item in evaluations:
+            self.exit_reachability_by_revision[item.exit_id] = {
+                "reachable": bool(item.reachable),
+                "accepted": bool(item.accepted),
+                "reasons": [reason.value for reason in item.rejection_reasons],
+                "costmap_revision": int(costmap_revision),
+                "evaluated_at": float(evaluated_at),
+            }
+
+    def record_exit_check(
+        self, exit_id: str, status: ExitStatus, *, sim_time: float,
+        costmap_revision: int, reason: str,
+    ) -> ExitCheckRecord:
+        self.update_exit_status(
+            exit_id, status, sim_time=sim_time,
+            reason=reason if status in (ExitStatus.BLOCKED, ExitStatus.DANGEROUS)
+            else None,
+        )
+        self.exit_visit_status[exit_id] = ExitVisitStatus.CHECKED
+        record = ExitCheckRecord(
+            exit_id, ExitVisitStatus.CHECKED, status, float(sim_time),
+            int(costmap_revision), str(reason),
+        )
+        self.exit_check_history.append(record)
+        return record
+
+    def record_exploration_interruption(
+        self, *, sim_time: float, reason: str, victim_id: str,
+        robot_pose_world, target_exit_id, active_path_grid,
+        costmap_revision: int,
+    ) -> ExplorationInterruption:
+        record = ExplorationInterruption(
+            float(sim_time), str(reason), str(victim_id),
+            tuple(map(float, robot_pose_world)),
+            None if target_exit_id is None else str(target_exit_id),
+            tuple((int(col), int(row)) for col, row in active_path_grid),
+            int(costmap_revision), True,
+        )
+        self.exploration_interruptions.append(record)
+        return record
+
+    def mark_exploration_stalled(self, reason: str) -> None:
+        self.exploration_stalled = True
+        self.exploration_stall_reason = str(reason)
+
+    def clear_exploration_stall(self) -> None:
+        self.exploration_stalled = False
+        self.exploration_stall_reason = None
+
     def update_costmap_revision(self, revision: int) -> None:
         if isinstance(revision, bool) or int(revision) < self.costmap_revision:
             raise ValueError("costmap revision must be monotonic and non-negative")
@@ -231,6 +353,9 @@ class WorldState:
         self.validate_position(position_world, label="robot")
         self.robot_position_world = (
             float(position_world[0]), float(position_world[1])
+        )
+        self.robot_grid_position = self.map_metadata.world_to_grid(
+            *self.robot_position_world
         )
         if self.travel_history is None:
             raise RuntimeError("no TravelHistory is attached")
@@ -330,6 +455,7 @@ class WorldState:
         if exit_item.approach_position_world is not None:
             self.validate_position(exit_item.approach_position_world, label=f"exit approach {exit_item.exit_id}")
         self.exits[exit_item.exit_id] = exit_item
+        self.exit_visit_status[exit_item.exit_id] = ExitVisitStatus.UNCHECKED
 
     def get_exit(self, exit_id: str) -> Exit:
         try:
@@ -522,6 +648,25 @@ class WorldState:
             "last_exit_switch_at": self.last_exit_switch_at,
             "exit_switch_cooldown_until": self.exit_switch_cooldown_until,
             "last_exit_switch_validation": self.last_exit_switch_validation,
+            "initial_robot_pose_world": self.initial_robot_pose_world,
+            "exploration_entry_pose_world": self.exploration_entry_pose_world,
+            "exploration_resume_pose_world": self.exploration_resume_pose_world,
+            "robot_grid_position": self.robot_grid_position,
+            "current_exploration_target_exit_id": self.current_exploration_target_exit_id,
+            "exploration_plan_start_world": self.exploration_plan_start_world,
+            "exploration_exit_path_lengths_m": self.exploration_exit_path_lengths_m,
+            "exploration_costmap_revision": self.exploration_costmap_revision,
+            "exploration_environment_revision": self.exploration_environment_revision,
+            "exploration_phase": self.exploration_phase,
+            "exploration_return_target_exit_id": self.exploration_return_target_exit_id,
+            "exploration_return_to_entrance_enabled": self.exploration_return_to_entrance_enabled,
+            "active_exploration_plan": self.active_exploration_plan,
+            "exit_visit_status": self.exit_visit_status,
+            "exit_check_history": self.exit_check_history,
+            "exit_reachability_by_revision": self.exit_reachability_by_revision,
+            "exploration_interruptions": self.exploration_interruptions,
+            "exploration_stalled": self.exploration_stalled,
+            "exploration_stall_reason": self.exploration_stall_reason,
             "static_obstacle_map": self.static_obstacle_map,
             "dynamic_obstacles": self.dynamic_obstacles,
             "exits": self.exits,

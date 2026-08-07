@@ -24,6 +24,9 @@ from .exit_switching import (
     RouteCostTrendMonitor, current_direction_world, evaluate_path_cost,
     is_opposite_direction,
 )
+from .exploration_manager import (
+    ExplorationConfig, ExplorationManager, ExplorationPhase, ExplorationPlan,
+)
 
 __all__ = [
     "ReturnFailureReason", "ReturnPathPlan", "ReturnPathPlanner",
@@ -41,4 +44,6 @@ __all__ = [
     "CostTrendDecision", "ExitSwitchingConfig", "RouteCostSample",
     "RouteCostTrendMonitor", "current_direction_world", "evaluate_path_cost",
     "is_opposite_direction",
+    "ExplorationConfig", "ExplorationManager", "ExplorationPhase",
+    "ExplorationPlan",
 ]

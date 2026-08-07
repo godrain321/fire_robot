@@ -39,7 +39,6 @@ def main() -> int:
     grid = GridMap(mesh, obstacles, holes, resolution, clearance)
     configured = [
         ("robot_start", scenario["robot_start"]),
-        ("search_waypoint", scenario["search_waypoint"]),
         *[(human["id"], human) for human in scenario["humans"]],
         *[(item["id"], item["approach"]) for item in scenario["exits"]],
     ]
@@ -82,4 +81,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

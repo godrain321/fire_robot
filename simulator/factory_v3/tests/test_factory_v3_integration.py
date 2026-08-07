@@ -55,7 +55,6 @@ def test_configured_mission_points_are_explicit_and_free():
     _, _, grid, scenario = _scenario_grid()
     points = [
         ("robot_start", scenario["robot_start"]),
-        ("search_waypoint", scenario["search_waypoint"]),
         *[(human["id"], human) for human in scenario["humans"]],
         *[(item["id"], item["approach"]) for item in scenario["exits"]],
     ]
