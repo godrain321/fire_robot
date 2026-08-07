@@ -1838,7 +1838,7 @@ def parse_args():
     parser.add_argument("--dt", type=float, default=0.1)
     parser.add_argument("--sensor-interval", type=float, default=0.25)
     parser.add_argument("--replan-interval", type=float, default=1.0)
-    parser.add_argument("--robot-speed", type=float, default=0.45)
+    parser.add_argument("--robot-speed", type=float, default=1.3)
     parser.add_argument("--unknown-penalty", type=float, default=2.0)
     parser.add_argument("--temperature-weight", type=float, default=8.0)
     parser.add_argument("--co-weight", type=float, default=8.0)

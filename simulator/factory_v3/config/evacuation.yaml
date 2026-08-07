@@ -33,7 +33,7 @@ humans:
     # robot detects them; rescue approach/following then takes ownership.
     scripted_motion:
       enabled: true
-      speed_mps: 0.8
+      speed_mps: 1.2
       stop_when_detected: true
       waypoints_world:
         - [19.4, 19.0]
@@ -53,7 +53,7 @@ victim_following:
   target_follow_distance_m: 1.5
   max_follow_distance_m: 2.5
   resume_follow_distance_m: 2.0
-  victim_speed_mps: 0.8
+  victim_speed_mps: 1.2
   robot_pose_sample_distance_m: 0.2
   follow_wait_timeout_s: 10.0
   max_reprompt_count: 3

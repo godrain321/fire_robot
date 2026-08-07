@@ -134,6 +134,8 @@ def test_configured_victim_wall_route_reaches_requested_destination():
     _, _, grid, scenario = _scenario_grid()
     victim = scenario["humans"][0]
     motion = ScriptedVictimMotionConfig.from_mapping(victim["scripted_motion"])
+    assert motion.speed_mps == 1.2
+    assert scenario["victim_following"]["victim_speed_mps"] == 1.2
     controller = ScriptedVictimMotionController(
         # The WorldState metadata contract uses the same origin/resolution.
         MapMetadata(
