@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import yaml
 
 from mapping.dynamic_obstacle_mapping import DynamicObstacleMappingConfig
@@ -105,4 +106,33 @@ def test_slam_and_costmap_surfaces_are_cached_by_revision(monkeypatch):
     viewer._draw_belief_cells(belief)
     assert viewer._costmap_surface is not first_cost_surface
     assert viewer._costmap_surface_build_count == 2
+    assert viewer._cached_text("same", viewer.small_font, (1, 2, 3)) is viewer._cached_text(
+        "same", viewer.small_font, (1, 2, 3)
+    )
+    first_points = viewer._cached_screen_points("route", ((0, 0), (1, 1)))
+    assert first_points is viewer._cached_screen_points(
+        "route", ((0, 0), (1, 1))
+    )
+    viewer.close()
+
+
+def test_render_interpolates_three_frames_without_extra_simulation_updates(
+    monkeypatch,
+):
+    monkeypatch.setenv("SDL_VIDEODRIVER", "dummy")
+    grid = GridMap((0, 1, 0, 1, 0, 1), [], [], 0.5, 0)
+    viewer = PygameSimulationViewer(
+        grid, SimpleNamespace(base_cost=1.0, simulation_dt=0.1)
+    )
+    rendered = []
+    monkeypatch.setattr(
+        viewer, "_draw_once",
+        lambda *args, **kwargs: rendered.append(args[1]),
+    )
+    monkeypatch.setattr(viewer.pygame.display, "flip", lambda: None)
+    viewer._last_render_pose = (0.0, 0.0, 0.0)
+    viewer.draw(None, SimpleNamespace(x=0.9, y=0.0, theta=0.0))
+    assert len(rendered) == 3
+    assert [item.x for item in rendered] == pytest.approx((0.3, 0.6, 0.9))
+    assert viewer._last_render_pose == (0.9, 0.0, 0.0)
     viewer.close()

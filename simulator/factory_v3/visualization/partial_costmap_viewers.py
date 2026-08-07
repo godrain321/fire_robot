@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -180,6 +181,17 @@ class PygameSimulationViewer:
         self._costmap_surface_revision = None
         self._costmap_surface_build_count = 0
         self._mini_surface_cache = {}
+        self._fov_surface = pygame.Surface(
+            self.screen.get_size(), pygame.SRCALPHA
+        )
+        self._fire_overlay_surface = pygame.Surface(
+            self.screen.get_size(), pygame.SRCALPHA
+        )
+        self._fire_overlay_key = None
+        self._screen_point_cache = {}
+        self._text_surface_cache = {}
+        self._last_render_pose = None
+        self.render_fps = 30
         self.running = True
         self.paused = False
 
@@ -230,6 +242,25 @@ class PygameSimulationViewer:
             min(left, right), min(top, bottom),
             max(1, abs(right - left)), max(1, abs(bottom - top)),
         )
+
+    def _cached_screen_points(self, namespace, world_points):
+        frozen = tuple((float(x), float(y)) for x, y in world_points)
+        cached = self._screen_point_cache.get(namespace)
+        if cached is None or cached[0] != frozen:
+            points = tuple(self.transform.world_to_screen(x, y) for x, y in frozen)
+            self._screen_point_cache[namespace] = (frozen, points)
+            return points
+        return cached[1]
+
+    def _cached_text(self, text, font, color):
+        key = (str(text), id(font), tuple(color))
+        surface = self._text_surface_cache.get(key)
+        if surface is None:
+            surface = font.render(str(text), True, color)
+            if len(self._text_surface_cache) >= 512:
+                self._text_surface_cache.clear()
+            self._text_surface_cache[key] = surface
+        return surface
 
     def _surface_from_rgb_yx(self, rgb_yx, size):
         """Convert map[y,x,RGB] to a y-flipped, scaled Pygame Surface."""
@@ -325,7 +356,8 @@ class PygameSimulationViewer:
             cam_x + camera.max_range * math.cos(right_angle),
             cam_y + camera.max_range * math.sin(right_angle),
         )
-        fov_surface = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+        fov_surface = self._fov_surface
+        fov_surface.fill((0, 0, 0, 0))
         pygame.draw.polygon(
             fov_surface, (40, 210, 120, 35), [camera_screen, left, right]
         )
@@ -346,22 +378,23 @@ class PygameSimulationViewer:
 
     def _draw_paths(self, follower, trajectory):
         pygame = self.pygame
-        if len(follower.remaining_grid_path()) >= 2:
-            points = [
-                self.transform.world_to_screen(*self.grid_map.grid_to_world(gx, gy))
-                for gx, gy in follower.remaining_grid_path()
-            ]
+        remaining = tuple(follower.remaining_grid_path())
+        if len(remaining) >= 2:
+            points = self._cached_screen_points(
+                "active_grid_path",
+                (self.grid_map.grid_to_world(gx, gy) for gx, gy in remaining),
+            )
             pygame.draw.lines(self.screen, self.PATH, False, points, 4)
         if len(trajectory) >= 2:
-            points = [self.transform.world_to_screen(x, y) for x, y in trajectory]
+            points = self._cached_screen_points("trajectory", trajectory)
             pygame.draw.lines(self.screen, self.TRAJECTORY, False, points, 3)
 
     def _draw_travel_and_return(self, travel_history, return_path, blocked_grid):
         if len(travel_history) >= 2:
-            points = [self.transform.world_to_screen(*item) for item in travel_history]
+            points = self._cached_screen_points("travel_history", travel_history)
             self.pygame.draw.lines(self.screen, self.TRAVEL_HISTORY, False, points, 3)
         if len(return_path) >= 2:
-            points = [self.transform.world_to_screen(*item) for item in return_path]
+            points = self._cached_screen_points("return_path", return_path)
             self.pygame.draw.lines(self.screen, self.RETURN_PATH, False, points, 5)
             self.pygame.draw.circle(self.screen, (255, 255, 255), points[1], 6)
         if blocked_grid is not None and self.grid_map.in_bounds(blocked_grid):
@@ -399,7 +432,7 @@ class PygameSimulationViewer:
             pygame.draw.circle(self.screen, (255, 255, 255), point, 9, 2)
             label = human["id"] if is_detected else f"{human['id']} (undetected)"
             self.screen.blit(
-                self.small_font.render(label, True, color),
+                self._cached_text(label, self.small_font, color),
                 (point[0] + 11, point[1] - 7),
             )
         evaluations = {item.exit_id: item for item in exit_evaluations}
@@ -424,7 +457,7 @@ class PygameSimulationViewer:
             if evaluation is not None and evaluation.rejection_reasons:
                 label += f": {evaluation.rejection_reasons[0].value}"
             self.screen.blit(
-                self.small_font.render(label, True, color),
+                self._cached_text(label, self.small_font, color),
                 (point[0] + 10, point[1] - 8),
             )
 
@@ -454,7 +487,7 @@ class PygameSimulationViewer:
             surface = self._surface_from_rgb_yx(rgb, rect.size)
             self._mini_surface_cache[cache_key] = surface
         self.screen.blit(surface, rect)
-        self.screen.blit(self.small_font.render(title, True, (240, 240, 240)),
+        self.screen.blit(self._cached_text(title, self.small_font, (240, 240, 240)),
                          (rect.x, rect.y - 18))
 
     def _draw_status(self, snapshot):
@@ -484,13 +517,21 @@ class PygameSimulationViewer:
             f"Follow wait: {snapshot.get('follow_wait', False)}",
             "SPACE: pause/resume   ESC: quit",
         ]
-        self.screen.blit(self.title_font.render("Simulation status", True, (245, 245, 245)), (x, y))
+        self.screen.blit(
+            self._cached_text(
+                "Simulation status", self.title_font, (245, 245, 245)
+            ),
+            (x, y),
+        )
         y += 30
         for line in lines:
-            self.screen.blit(self.small_font.render(line, True, (225, 225, 225)), (x, y))
+            self.screen.blit(
+                self._cached_text(line, self.small_font, (225, 225, 225)),
+                (x, y),
+            )
             y += 18
 
-    def draw(
+    def _draw_once(
         self, belief, state, start, goal, follower, trajectory, camera,
         newly_observed_cells, snapshot, humans=(), exits=(), detected_ids=(),
         travel_history=(), return_path=(), blocked_return_grid=None,
@@ -515,13 +556,19 @@ class PygameSimulationViewer:
                 f"obs={fire_localization.valid_observation_count}"
             )
         if fire_visible and self.overlay_config.show_fire_candidates:
-            for col, row in fire_localization.candidate_cells_grid:
-                overlay = self.pygame.Surface(
-                    self.transform.grid_rect(col, row).size,
-                    self.pygame.SRCALPHA,
-                )
-                overlay.fill((255, 70, 20, 75))
-                self.screen.blit(overlay, self.transform.grid_rect(col, row).topleft)
+            fire_key = (
+                fire_localization.state.name,
+                tuple(fire_localization.candidate_cells_grid),
+            )
+            if fire_key != self._fire_overlay_key:
+                self._fire_overlay_surface.fill((0, 0, 0, 0))
+                for col, row in fire_localization.candidate_cells_grid:
+                    self.pygame.draw.rect(
+                        self._fire_overlay_surface, (255, 70, 20, 75),
+                        self.transform.grid_rect(col, row),
+                    )
+                self._fire_overlay_key = fire_key
+            self.screen.blit(self._fire_overlay_surface, (0, 0))
             if (
                 self.overlay_config.show_estimated_fire_center
                 and fire_localization.state.name in {
@@ -542,14 +589,14 @@ class PygameSimulationViewer:
         if self.overlay_config.show_current_path:
             self._draw_paths(follower, trajectory)
         if path_simplification is not None:
-            original = [
-                self.transform.world_to_screen(*self.grid_map.grid_to_world(*cell))
-                for cell in path_simplification.original_path_grid
-            ]
-            final = [
-                self.transform.world_to_screen(*point)
-                for point in path_simplification.waypoints_world
-            ]
+            original = self._cached_screen_points(
+                "simplification_original",
+                (self.grid_map.grid_to_world(*cell)
+                 for cell in path_simplification.original_path_grid),
+            )
+            final = self._cached_screen_points(
+                "simplification_final", path_simplification.waypoints_world
+            )
             if len(original) >= 2:
                 self.pygame.draw.lines(
                     self.screen, (145, 150, 160), False, original, 2
@@ -577,10 +624,10 @@ class PygameSimulationViewer:
             travel_history, return_path, blocked_return_grid
         )
         if victim_following is not None and victim_following.position_world is not None:
-            history = [
-                self.transform.world_to_screen(item.x, item.y)
-                for item in victim_following.pose_history
-            ]
+            history = self._cached_screen_points(
+                "victim_pose_history",
+                ((item.x, item.y) for item in victim_following.pose_history),
+            )
             if len(history) >= 2:
                 self.pygame.draw.lines(
                     self.screen, (100, 170, 255), False, history, 2
@@ -619,7 +666,9 @@ class PygameSimulationViewer:
                 point = self.transform.world_to_screen(approach["x"], approach["y"])
                 label = self.exit_status_label(state_value)
                 self.screen.blit(
-                    self.small_font.render(label, True, colors[state_value]),
+                    self._cached_text(
+                        label, self.small_font, colors[state_value]
+                    ),
                     (point[0] + 10, point[1] + 9),
                 )
         self.pygame.draw.rect(self.screen, (210, 210, 210), self.map_rect, 2)
@@ -644,9 +693,42 @@ class PygameSimulationViewer:
             blocked=belief.blocked_mask, revision=belief.revision,
         )
         self._draw_status(snapshot)
-        self.pygame.display.flip()
-        target_fps = max(1, int(round(1.0 / self.config.simulation_dt)))
-        self.clock.tick(target_fps)
+
+    def draw(self, *args, **kwargs) -> None:
+        """Render at 30 FPS while simulation state remains at its own rate."""
+        if len(args) >= 2:
+            state = args[1]
+        elif "state" in kwargs:
+            state = kwargs["state"]
+        else:
+            raise TypeError("draw requires belief and robot state")
+        current = (float(state.x), float(state.y), float(state.theta))
+        previous = self._last_render_pose or current
+        frame_count = max(
+            1, int(round(float(self.config.simulation_dt) * self.render_fps))
+        )
+        angle_delta = math.atan2(
+            math.sin(current[2] - previous[2]),
+            math.cos(current[2] - previous[2]),
+        )
+        for frame_index in range(frame_count):
+            ratio = (frame_index + 1) / frame_count
+            render_state = SimpleNamespace(
+                x=previous[0] + (current[0] - previous[0]) * ratio,
+                y=previous[1] + (current[1] - previous[1]) * ratio,
+                theta=previous[2] + angle_delta * ratio,
+            )
+            if len(args) >= 2:
+                frame_args = list(args)
+                frame_args[1] = render_state
+                self._draw_once(*frame_args, **kwargs)
+            else:
+                frame_kwargs = dict(kwargs)
+                frame_kwargs["state"] = render_state
+                self._draw_once(**frame_kwargs)
+            self.pygame.display.flip()
+            self.clock.tick(self.render_fps)
+        self._last_render_pose = current
 
     def close(self):
         self.pygame.quit()
