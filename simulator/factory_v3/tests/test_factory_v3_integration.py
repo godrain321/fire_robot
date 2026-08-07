@@ -36,6 +36,18 @@ def test_catf_geometry_is_loaded():
     assert len(obstacles) > 600
 
 
+def test_exit1_scenario_blocker_is_loaded_without_changing_base_includes():
+    _, obstacles, _ = load_factory_geometry(BASE / "factory_v3.fds")
+    blocker_xb = [7.8, 10.8, 17.8, 18.0, 0.0, 1.4]
+    assert any(item["xb"] == blocker_xb for item in obstacles)
+    scenario = yaml.safe_load(
+        (BASE / "config" / "evacuation.yaml").read_text(encoding="utf-8")
+    )
+    exit1 = next(item for item in scenario["exits"] if item["id"] == "EXIT1")
+    assert exit1["initial_status"] == "blocked"
+    assert exit1["approach"] == {"x": 9.4, "y": 17.2}
+
+
 def test_world_grid_roundtrip_and_boundaries():
     mesh, _, grid, _ = _scenario_grid()
     for x, y in (

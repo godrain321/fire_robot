@@ -165,9 +165,11 @@ path_simplification:
 # explicit free cells on the building-interior side of each solid marker.
 exits:
   - id: EXIT1
-    initial_status: unknown
+    # Blocked by config/exit_blockers.inc; reset to unknown if that scenario
+    # obstacle is removed.
+    initial_status: blocked
     marker: {x: 9.3476007524, y: 18.2045725287}
-    approach: {x: 9.4, y: 17.4}
+    approach: {x: 9.4, y: 17.2}
   - id: EXIT2
     initial_status: unknown
     marker: {x: 21.0918754002, y: 9.4615073998}
