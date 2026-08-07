@@ -8,7 +8,9 @@ import numpy as np
 import yaml
 
 from human_detection_sim import SimpleHumanDetector
-from mapping.fire_costmap import load_factory_geometry
+from mapping.fire_costmap import (
+    load_factory_geometry, obstacles_for_initial_robot_map,
+)
 from mapping.grid_map import GridMap
 from sensors.thermal_camera import ThermalCameraMLX90640
 from simulation.ground_truth import FDSGroundTruthEnvironment
@@ -22,6 +24,7 @@ def _scenario_grid():
     scenario = yaml.safe_load(
         (BASE / "config" / "evacuation.yaml").read_text(encoding="utf-8")
     )
+    obstacles = obstacles_for_initial_robot_map(obstacles, scenario)
     grid = GridMap(
         mesh, obstacles, holes,
         resolution=scenario["planner"]["grid_resolution_m"],
@@ -44,8 +47,10 @@ def test_exit1_scenario_blocker_is_loaded_without_changing_base_includes():
         (BASE / "config" / "evacuation.yaml").read_text(encoding="utf-8")
     )
     exit1 = next(item for item in scenario["exits"] if item["id"] == "EXIT1")
-    assert exit1["initial_status"] == "blocked"
-    assert exit1["approach"] == {"x": 9.4, "y": 17.2}
+    assert exit1["initial_status"] == "unknown"
+    assert exit1["approach"] == {"x": 9.4, "y": 17.4}
+    planner_obstacles = obstacles_for_initial_robot_map(obstacles, scenario)
+    assert not any(item["xb"] == blocker_xb for item in planner_obstacles)
 
 
 def test_world_grid_roundtrip_and_boundaries():

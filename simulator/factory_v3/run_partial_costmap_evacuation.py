@@ -13,7 +13,9 @@ import numpy as np
 import yaml
 
 from human_detection_sim import SimpleHumanDetector
-from mapping.fire_costmap import load_factory_geometry
+from mapping.fire_costmap import (
+    load_factory_geometry, obstacles_for_initial_robot_map,
+)
 from mapping.grid_map import GridMap
 from mapping.partial_costmap import (
     PartialCostmapConfig,
@@ -185,13 +187,16 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     )
     print(f"Mission state: {mission.current_state.name}")
     mesh_xb, obstacles, holes = load_factory_geometry(args.fds_file)
+    planner_obstacles = obstacles_for_initial_robot_map(
+        obstacles, args.scenario
+    )
     grid_map = GridMap(
-        mesh_xb, obstacles, holes, config.grid_resolution,
+        mesh_xb, planner_obstacles, holes, config.grid_resolution,
         config.inflation_radius if config.use_inflation else 0.0,
     )
     static_map = np.asarray(grid_map.occupancy, dtype=bool)
     display_grid_map = GridMap(
-        mesh_xb, obstacles, holes, config.grid_resolution, 0.0,
+        mesh_xb, planner_obstacles, holes, config.grid_resolution, 0.0,
         include_lower_obstacle_boundary=False,
     )
     display_static_map = np.asarray(display_grid_map.occupancy, dtype=bool)

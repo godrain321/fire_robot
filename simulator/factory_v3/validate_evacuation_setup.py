@@ -10,7 +10,9 @@ import re
 import numpy as np
 import yaml
 
-from mapping.fire_costmap import load_factory_geometry
+from mapping.fire_costmap import (
+    load_factory_geometry, obstacles_for_initial_robot_map,
+)
 from mapping.grid_map import GridMap
 
 
@@ -34,9 +36,10 @@ def main() -> int:
         raise ValueError(f"required FDS output definitions missing: {missing}")
 
     mesh, obstacles, holes = load_factory_geometry(fds_path)
+    planner_obstacles = obstacles_for_initial_robot_map(obstacles, scenario)
     resolution = float(scenario["planner"]["grid_resolution_m"])
     clearance = float(scenario["planner"]["inflation_radius_m"])
-    grid = GridMap(mesh, obstacles, holes, resolution, clearance)
+    grid = GridMap(mesh, planner_obstacles, holes, resolution, clearance)
     configured = [
         ("robot_start", scenario["robot_start"]),
         *[(human["id"], human) for human in scenario["humans"]],
@@ -64,6 +67,7 @@ def main() -> int:
         "planner_shape_yx": [grid.height, grid.width],
         "planner_resolution_m": resolution,
         "fds_obstacle_count_including_catf": len(obstacles),
+        "initial_robot_map_obstacle_count": len(planner_obstacles),
         "configured_points": point_report,
         "temperature_npz_exists": (base / scenario["temperature_npz"]).is_file(),
         "result_smv_exists": (base / f"{scenario['fds_result_chid']}.smv").is_file(),

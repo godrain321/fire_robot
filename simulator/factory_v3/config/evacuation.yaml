@@ -6,6 +6,13 @@ planner:
   grid_resolution_m: 0.20
   inflation_radius_m: 0.45
 
+# These objects exist in FDS/Smokeview but are deliberately absent from the
+# robot's initial Pygame/planner map. A future obstacle detector may add them
+# to the dynamic obstacle layer after observation.
+robot_map:
+  initially_unobserved_fds_obstacle_ids:
+    - EXIT1_FALLEN_STORAGE_RACK
+
 # TODO temporary: semantic INIT lies in the current inflated machinery mask.
 # This explicit nearby measured-free point is used instead; it is never moved
 # silently by the program.
@@ -165,11 +172,9 @@ path_simplification:
 # explicit free cells on the building-interior side of each solid marker.
 exits:
   - id: EXIT1
-    # Blocked by config/exit_blockers.inc; reset to unknown if that scenario
-    # obstacle is removed.
-    initial_status: blocked
+    initial_status: unknown
     marker: {x: 9.3476007524, y: 18.2045725287}
-    approach: {x: 9.4, y: 17.2}
+    approach: {x: 9.4, y: 17.4}
   - id: EXIT2
     initial_status: unknown
     marker: {x: 21.0918754002, y: 9.4615073998}

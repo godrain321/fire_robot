@@ -6,7 +6,9 @@ import numpy as np
 import pytest
 import yaml
 
-from mapping.fire_costmap import load_factory_geometry
+from mapping.fire_costmap import (
+    load_factory_geometry, obstacles_for_initial_robot_map,
+)
 from mapping.grid_map import GridMap
 from navigation.exploration_manager import (
     ExplorationConfig, ExplorationManager, ExplorationPhase,
@@ -49,6 +51,7 @@ def test_initial_pose_comes_from_existing_yaml_and_is_not_an_entrance():
 def test_factory_initial_world_pose_grid_and_yaw_are_preserved():
     scenario = yaml.safe_load((BASE / "config/evacuation.yaml").read_text())
     mesh, obstacles, holes = load_factory_geometry(BASE / scenario["fds_file"])
+    obstacles = obstacles_for_initial_robot_map(obstacles, scenario)
     grid = GridMap(mesh, obstacles, holes, 0.2, 0.45)
     start = scenario["robot_start"]
     col, row = grid.world_to_grid(start["x"], start["y"])

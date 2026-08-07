@@ -5,7 +5,9 @@ import numpy as np
 import pytest
 import yaml
 
-from mapping.fire_costmap import load_factory_geometry
+from mapping.fire_costmap import (
+    load_factory_geometry, obstacles_for_initial_robot_map,
+)
 from mapping.grid_map import GridMap
 from mapping.partial_costmap import PartialCostmapConfig
 from mission.mission_manager import MissionEvent, MissionManager
@@ -95,6 +97,7 @@ def test_world_state_and_mission_manager_minimal_link():
 def test_factory_v3_config_loads_and_bad_enum_is_rejected():
     scenario = yaml.safe_load((BASE / "config/evacuation.yaml").read_text())
     mesh, obstacles, holes = load_factory_geometry(BASE / "factory_v3.fds")
+    obstacles = obstacles_for_initial_robot_map(obstacles, scenario)
     config = PartialCostmapConfig(
         grid_resolution=scenario["planner"]["grid_resolution_m"],
         inflation_radius=scenario["planner"]["inflation_radius_m"],
