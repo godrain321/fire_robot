@@ -43,6 +43,27 @@ def test_catf_geometry_is_loaded():
     assert len(obstacles) > 600
 
 
+def test_exit2_fire_line_replaces_strong_remote_oil_source():
+    scenario_text = (BASE / "generated" / "scenario.inc").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        "ID='MACHINERY_OIL_FIRE_OIL', HRRPUA=250.000"
+        in scenario_text
+    )
+    assert (
+        "ID='EXIT2_BLOCKING_FIRE', HRRPUA=1200.000"
+        in scenario_text
+    )
+    fire_line = next(
+        line for line in scenario_text.splitlines()
+        if "ID='V3_EXIT2_BLOCKING_FIRE_001'" in line
+    )
+    assert "XB=19.200,21.400,9.400,9.600,0.000,0.000" in fire_line
+    assert "XYZ=21.200,9.500,0.000" in fire_line
+    assert "SPREAD_RATE=0.0300" in fire_line
+
+
 def test_exit1_scenario_blocker_is_loaded_without_changing_base_includes():
     _, obstacles, _ = load_factory_geometry(BASE / "factory_v3.fds")
     blocker_xb = [7.8, 10.8, 17.8, 18.0, 0.0, 1.4]
