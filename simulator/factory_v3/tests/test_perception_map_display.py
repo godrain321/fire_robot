@@ -2,8 +2,9 @@ import numpy as np
 import pytest
 
 from visualization.partial_costmap_viewers import (
-    MapOverlayConfig, PerceptionMapDisplayConfig,
+    MapOverlayConfig, PerceptionMapDisplayConfig, PygameSimulationViewer,
 )
+from world.entities import ExitStatus
 
 
 def test_unknown_safe_caution_danger_blocked_colors_are_distinct():
@@ -40,3 +41,15 @@ def test_invalid_display_config(values):
 def test_overlay_settings_require_booleans():
     with pytest.raises(TypeError):
         MapOverlayConfig(show_dynamic_obstacles=1)
+
+
+def test_human_marker_changes_color_after_detection():
+    assert (
+        PygameSimulationViewer.human_marker_color(False)
+        != PygameSimulationViewer.human_marker_color(True)
+    )
+
+
+@pytest.mark.parametrize("status", tuple(ExitStatus))
+def test_exit_status_overlay_uses_enum_value_text(status):
+    assert PygameSimulationViewer.exit_status_label(status) == status.value

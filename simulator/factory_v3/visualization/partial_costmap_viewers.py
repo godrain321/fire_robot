@@ -137,6 +137,8 @@ class PygameSimulationViewer:
     TRAVEL_HISTORY = (245, 170, 45)
     RETURN_PATH = (220, 80, 245)
     NEW_OBSERVATION = (255, 235, 80)
+    UNDETECTED_HUMAN = (155, 160, 170)
+    DETECTED_HUMAN = (255, 100, 100)
 
     def __init__(
         self, grid_map, config, title="Partial Costmap Evacuation",
@@ -192,6 +194,18 @@ class PygameSimulationViewer:
     def _risk_color(value, maximum, alpha=105):
         ratio = 0.0 if maximum <= 0.0 else float(np.clip(value / maximum, 0.0, 1.0))
         return (int(255 * ratio), int(150 * (1.0 - ratio)), 35, alpha)
+
+    @classmethod
+    def human_marker_color(cls, detected):
+        """Return the display color without changing victim belief state."""
+        return cls.DETECTED_HUMAN if bool(detected) else cls.UNDETECTED_HUMAN
+
+    @staticmethod
+    def exit_status_label(status):
+        """Return the user-facing Enum value used beside an exit marker."""
+        if not isinstance(status, ExitStatus):
+            raise TypeError("exit display status must be ExitStatus")
+        return status.value
 
     def _draw_belief_cells(self, belief):
         pygame = self.pygame
@@ -317,12 +331,18 @@ class PygameSimulationViewer:
         pygame.draw.line(self.screen, (255, 255, 255), robot_p, heading, 4)
         detected = set(detected_ids)
         for human in humans:
-            if human["id"] not in detected or not self.overlay_config.show_detected_humans:
+            if not self.overlay_config.show_detected_humans:
                 continue
             point = self.transform.world_to_screen(human["x"], human["y"])
-            color = (255, 100, 100)
+            is_detected = human["id"] in detected
+            color = self.human_marker_color(is_detected)
             pygame.draw.circle(self.screen, color, point, 9)
             pygame.draw.circle(self.screen, (255, 255, 255), point, 9, 2)
+            label = human["id"] if is_detected else f"{human['id']} (undetected)"
+            self.screen.blit(
+                self.small_font.render(label, True, color),
+                (point[0] + 11, point[1] - 7),
+            )
         evaluations = {item.exit_id: item for item in exit_evaluations}
         for exit_item in exits:
             approach = exit_item["approach"]
@@ -535,12 +555,11 @@ class PygameSimulationViewer:
                 state_value = exit_states.get(exit_item["id"], ExitStatus.UNKNOWN)
                 approach = exit_item["approach"]
                 point = self.transform.world_to_screen(approach["x"], approach["y"])
-                self.pygame.draw.circle(self.screen, colors[state_value], point, 12, 3)
-                if state_value is ExitStatus.BLOCKED:
-                    self.pygame.draw.line(self.screen, (255, 255, 255),
-                                          (point[0]-7, point[1]-7), (point[0]+7, point[1]+7), 3)
-                    self.pygame.draw.line(self.screen, (255, 255, 255),
-                                          (point[0]-7, point[1]+7), (point[0]+7, point[1]-7), 3)
+                label = self.exit_status_label(state_value)
+                self.screen.blit(
+                    self.small_font.render(label, True, colors[state_value]),
+                    (point[0] + 10, point[1] + 9),
+                )
         self.pygame.draw.rect(self.screen, (210, 210, 210), self.map_rect, 2)
         self._draw_mini_layer(
             belief.temperature_cost_map,
