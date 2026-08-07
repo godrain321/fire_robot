@@ -99,6 +99,11 @@ class WorldState:
         self.fire_localization_result = None
         self.latest_exit_blockage_results: dict[str, Any] = {}
         self.last_perception_replan_reason: str | None = None
+        self.last_replan_decision = None
+        self.last_processed_costmap_revision: int | None = None
+        self.last_replan_time: float | None = None
+        self.last_replan_robot_pose: tuple[float, float] | None = None
+        self.last_selected_exit_id: str | None = None
         self.active_route_decision = None
         self.active_route_valid = False
         self.active_route_invalid_reason: str | None = None
@@ -317,6 +322,18 @@ class WorldState:
         if isinstance(revision, bool) or int(revision) < self.costmap_revision:
             raise ValueError("costmap revision must be monotonic and non-negative")
         self.costmap_revision = int(revision)
+
+    def record_replan_decision(
+        self, decision, *, costmap_revision: int, sim_time: float,
+        robot_pose_world: tuple[float, float], selected_exit_id: str | None,
+    ) -> None:
+        """Store a typed event decision without dynamically adding fields."""
+        self.last_replan_decision = decision
+        self.last_processed_costmap_revision = int(costmap_revision)
+        self.last_replan_time = float(sim_time)
+        self.last_replan_robot_pose = tuple(map(float, robot_pose_world))
+        self.last_selected_exit_id = selected_exit_id
+        self.last_perception_replan_reason = decision.reason.value
 
     def set_active_route_decision(self, decision) -> None:
         if not decision.success:
@@ -737,6 +754,14 @@ class WorldState:
             "fire_localization_result": self.fire_localization_result,
             "latest_exit_blockage_results": self.latest_exit_blockage_results,
             "last_perception_replan_reason": self.last_perception_replan_reason,
+            "last_replan_decision": (
+                None if self.last_replan_decision is None else
+                self.last_replan_decision.to_dict()
+            ),
+            "last_processed_costmap_revision": self.last_processed_costmap_revision,
+            "last_replan_time": self.last_replan_time,
+            "last_replan_robot_pose": self.last_replan_robot_pose,
+            "last_selected_exit_id": self.last_selected_exit_id,
             "active_route_decision": self.active_route_decision,
             "active_route_valid": self.active_route_valid,
             "active_route_invalid_reason": self.active_route_invalid_reason,

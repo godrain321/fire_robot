@@ -228,6 +228,28 @@ replanning:
   enabled: true
   max_replan_attempts: 5
   cooldown_seconds: 0.5
+  periodic_reevaluation:
+    enabled: true
+    interval_s: 5.0
+    travel_distance_m: 2.0
+  safer_exit:
+    enabled: true
+    minimum_cost_improvement_ratio: 0.15
+    switch_cooldown_s: 5.0
+  victim_follow:
+    maximum_follow_distance_m: 2.5
+    progress_timeout_s: 3.0
+    use_follow_wait_before_replan: true
+  hysteresis:
+    temperature_block_c: 60.0
+    temperature_release_c: 55.0
+    co_block_ppm: 1600.0
+    co_release_ppm: 1400.0
+    block_confirmation_observations: 2
+    release_confirmation_observations: 3
+  duplicate_suppression:
+    minimum_replan_interval_s: 0.2
+    ignore_same_reason_same_revision: true
 
 # The static planner map is already inflated by planner.inflation_radius_m.
 # Unknown cells remain traversable with PartialCostmap's explicit penalty;

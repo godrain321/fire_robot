@@ -39,6 +39,9 @@ from navigation.exit_switching import (
     ExitSwitchingConfig, RouteCostTrendMonitor, current_direction_world,
     evaluate_path_cost,
 )
+from navigation.event_replanning import (
+    EventReplanningConfig, EventReplanningPolicy, ReplanReason,
+)
 from navigation.exploration_manager import (
     ExplorationConfig, ExplorationManager, ExplorationPhase,
 )
@@ -278,7 +281,15 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     path_validation_config = PathValidationConfig.from_mapping(
         args.path_validation_config
     )
-    replanning_config = ReplanningConfig.from_mapping(args.replanning_config)
+    event_replanning_config = EventReplanningConfig.from_mapping(
+        args.replanning_config
+    )
+    legacy_replanning_keys = {
+        key: value for key, value in args.replanning_config.items()
+        if key in ReplanningConfig.__dataclass_fields__
+    }
+    replanning_config = ReplanningConfig.from_mapping(legacy_replanning_keys)
+    event_replanning = EventReplanningPolicy(event_replanning_config)
     path_simplifier = SafePathSimplifier(
         world.map_metadata,
         PathSimplificationConfig.from_mapping(args.path_simplification_config),
@@ -368,6 +379,10 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     latest_newly_observed_cells: set[tuple[int, int]] = set()
     last_replan_reason = "none"
     last_route_environment_revision = world.environment_revision
+    event_replanning.mark_reevaluation_complete(
+        elapsed_time=sim_elapsed, robot_pose=(state.x, state.y),
+        costmap_revision=belief.revision,
+    )
 
     def begin_victim_following(victim) -> None:
         """Start from real poses only after a validated route is active."""
@@ -950,13 +965,13 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     world.active_route_decision.target_exit_id is not None
                     and world.get_exit(
                         world.active_route_decision.target_exit_id
-                    ).status is ExitStatus.BLOCKED
+                    ).status in (ExitStatus.BLOCKED, ExitStatus.DANGEROUS)
                 )
                 valid = route_validation.safe and not target_blocked
                 blocked_grid = route_validation.first_rejected_cell
                 invalid_reason = (
                     None if valid else (
-                        "current_exit_blocked" if target_blocked else
+                        "current_exit_blocked_or_dangerous" if target_blocked else
                         route_validation.rejection_reasons[0].value
                     )
                 )
@@ -1002,7 +1017,10 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                                 cost_map=belief.final_cost_map,
                                 costmap_revision=belief.revision,
                                 created_at=sim_elapsed,
-                                risk_first=(invalid_reason == "current_exit_blocked"),
+                                risk_first=(
+                                    invalid_reason
+                                    == "current_exit_blocked_or_dangerous"
+                                ),
                             )
                         if replacement.success:
                             activate_replacement_route(replacement)
@@ -1337,18 +1355,67 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             replan_reason = None
         elif not remaining_path:
             replan_reason = "initial_or_missing_path"
-        elif path_has_new_block(remaining_path, newly_blocked):
-            replan_reason = "new_risk_on_path"
-        elif world.active_route_decision is not None and world.active_route_valid:
-            # Stage-6 routes are revalidated on explicit belief/environment
-            # revisions. Do not replace them with unrelated periodic A* runs.
-            replan_reason = None
-        elif sim_elapsed - last_replan_time >= config.replan_interval_seconds - 1e-9:
-            replan_reason = "periodic"
-        elif config.replan_distance > 0.0 and math.hypot(
-            state.x - last_replan_position[0], state.y - last_replan_position[1]
-        ) >= config.replan_distance:
-            replan_reason = "distance"
+        else:
+            active_victim_item = (
+                None if world.active_following_victim_id is None else
+                world.get_victim(world.active_following_victim_id)
+            )
+            replan_decision = event_replanning.evaluate(
+                current_path=remaining_path,
+                current_costmap=belief.final_cost_map,
+                costmap_revision=belief.revision,
+                dynamic_obstacle_map=world.dynamic_obstacle_mask(),
+                temperature_map=belief.temperature_belief_map,
+                co_map=belief.co_belief_map,
+                temperature_observed_mask=belief.temperature_observed_mask,
+                co_observed_mask=belief.co_observed_mask,
+                exit_statuses={
+                    exit_id: item.status for exit_id, item in world.exits.items()
+                },
+                current_exit_id=selected_exit,
+                robot_pose=(state.x, state.y), elapsed_time=sim_elapsed,
+                victim_follow_active=victim_follower.active,
+                victim_follow_distance_m=(
+                    None if active_victim_item is None else
+                    active_victim_item.follow_distance_m
+                ),
+                victim_progress_stalled=(
+                    victim_follower.state is FollowState.FOLLOW_FAILED
+                ),
+            )
+            if replan_decision.required:
+                world.record_replan_decision(
+                    replan_decision, costmap_revision=belief.revision,
+                    sim_time=sim_elapsed, robot_pose_world=(state.x, state.y),
+                    selected_exit_id=selected_exit,
+                )
+                if replan_decision.reason in (
+                    ReplanReason.PERIODIC_REEVALUATION,
+                    ReplanReason.DISTANCE_REEVALUATION,
+                ):
+                    # A general reevaluation first validates the current path.
+                    # A* and controller replacement are unnecessary when it is
+                    # still safe and the target exit remains valid.
+                    if remaining_route_is_safe() and (
+                        selected_exit is None
+                        or world.get_exit(selected_exit).status not in (
+                            ExitStatus.BLOCKED, ExitStatus.DANGEROUS,
+                        )
+                    ):
+                        event_replanning.mark_reevaluation_complete(
+                            elapsed_time=sim_elapsed,
+                            robot_pose=(state.x, state.y),
+                            costmap_revision=belief.revision,
+                        )
+                    else:
+                        replan_reason = replan_decision.reason.value
+                elif replan_decision.reason is ReplanReason.VICTIM_FOLLOW_FAILURE:
+                    # FOLLOW_WAIT owns ordinary lag recovery. Only a confirmed
+                    # following failure proceeds to route replanning.
+                    if victim_follower.state is FollowState.FOLLOW_FAILED:
+                        replan_reason = replan_decision.reason.value
+                elif world.active_route_decision is None:
+                    replan_reason = replan_decision.reason.value
 
         if replan_reason is not None:
             if mission.current_state is MissionState.REPLAN:
@@ -1373,6 +1440,12 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             last_replan_reason = replan_reason
             last_replan_time = sim_elapsed
             last_replan_position = (state.x, state.y)
+            if replan_reason != "initial_or_missing_path":
+                event_replanning.mark_processed(
+                    replan_decision, costmap_revision=belief.revision,
+                    elapsed_time=sim_elapsed, robot_pose=(state.x, state.y),
+                    selected_exit_id=selected_exit,
+                )
             if result.path:
                 simplified = activate_simplified_path(
                     result.path, escape_path=result.escape_path,
