@@ -21,12 +21,29 @@ robot_start:
   y: 16.0
   yaw_deg: -85.70
 
-# TODO temporary until a scenario-specific victim pose is supplied.
-# This free, reachable point is outside the robot's initial 10 m detection range,
-# so exit exploration begins before the victim can be detected.
+# The initial pose is hidden from the robot by known SLAM occupancy. The victim
+# then walks along the configured wall-side route until detected.
 humans:
   # Coordinates are factory_v3 FDS world metres.
-  - {id: victim_1, x: 22.0, y: 24.0, initial_status: undetected}
+  - id: victim_1
+    x: 19.4
+    y: 19.0
+    initial_status: undetected
+    # A* checked wall-side route. The victim walks independently until the
+    # robot detects them; rescue approach/following then takes ownership.
+    scripted_motion:
+      enabled: true
+      speed_mps: 0.8
+      stop_when_detected: true
+      waypoints_world:
+        - [19.4, 19.0]
+        - [19.4, 16.4]
+        - [18.6, 15.6]
+        - [17.6, 15.6]
+        - [17.4, 15.4]
+        - [16.0, 15.4]
+        - [15.6, 15.0]
+        - [14.4, 15.0]
 dynamic_obstacles: []
 human_detection_range_m: 10.0
 victim_approach_distance_m: 1.0

@@ -46,6 +46,9 @@ from navigation.victim_following import (
     FollowState, VictimFollowingConfig, VictimFollowingController,
     evacuation_success_ready,
 )
+from navigation.victim_scripted_motion import (
+    ScriptedVictimMotionConfig, ScriptedVictimMotionController,
+)
 from navigation.exit_blockage import ExitBlockageConfig, ExitBlockageEvaluator
 from planner.a_star import weighted_a_star_with_escape
 from planner.evacuation_planner import EvacuationPlanner, ExitSelectionConfig
@@ -286,6 +289,23 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     victim_follower = VictimFollowingController(
         world.map_metadata, following_config
     )
+    scripted_victim_motions = {}
+    for human in args.scenario.get("humans", []):
+        motion_config = ScriptedVictimMotionConfig.from_mapping(
+            human.get("scripted_motion")
+        )
+        if not motion_config.enabled:
+            continue
+        controller = ScriptedVictimMotionController(
+            world.map_metadata, human["id"], (human["x"], human["y"]),
+            motion_config,
+        )
+        for index, waypoint in enumerate(motion_config.waypoints_world):
+            _validate_free_point(
+                f"human {human['id']} scripted waypoint {index}",
+                waypoint, grid_map,
+            )
+        scripted_victim_motions[human["id"]] = controller
     world.attach_victim_following(victim_follower)
     world.attach_travel_history(travel_history)
     world.set_initial_robot_pose(args.start, math.radians(args.start_theta))
@@ -1060,6 +1080,24 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             last_sensor_time = sim_elapsed
             if thermal_viewer is not None:
                 thermal_viewer.update(latest_thermal, fds_time)
+
+        for victim_id, controller in scripted_victim_motions.items():
+            victim = world.get_victim(victim_id)
+            if (
+                controller.completed
+                or (
+                    controller.config.stop_when_detected
+                    and victim.status is not VictimStatus.UNDETECTED
+                )
+            ):
+                continue
+            controller.update(
+                dt=config.simulation_dt,
+                static_obstacle_map=world.static_obstacle_map,
+                dynamic_obstacle_map=world.dynamic_obstacle_mask(),
+            )
+            world.update_victim_position(victim_id, controller.position_world)
+        args.humans = world.legacy_humans()
 
         detections = human_detector.detect(
             robot_position=(state.x, state.y),

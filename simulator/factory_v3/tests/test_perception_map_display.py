@@ -50,6 +50,11 @@ def test_human_marker_changes_color_after_detection():
     )
 
 
+def test_planner_static_inflation_is_not_drawn_as_slam_wall():
+    assert not PygameSimulationViewer.perception_blocked_overlay(True, True)
+    assert PygameSimulationViewer.perception_blocked_overlay(True, False)
+
+
 @pytest.mark.parametrize("status", tuple(ExitStatus))
 def test_exit_status_overlay_uses_enum_value_text(status):
     assert PygameSimulationViewer.exit_status_label(status) == status.value

@@ -515,6 +515,17 @@ class WorldState:
                 raise ValueError(f"unknown victim field: {key}")
             setattr(victim, key, value)
 
+    def update_victim_position(self, victim_id: str, position_world) -> None:
+        """Store an independently moving victim pose without changing status."""
+        victim = self.get_victim(victim_id)
+        col, row = self.validate_position(
+            position_world, label=f"victim {victim.victim_id} position"
+        )
+        victim.position_world = (
+            float(position_world[0]), float(position_world[1])
+        )
+        victim.current_grid_position = (col, row)
+
     def attach_victim_following(self, controller) -> None:
         if controller.metadata != self.map_metadata:
             raise ValueError("victim following metadata must match WorldState")

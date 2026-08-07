@@ -207,6 +207,11 @@ class PygameSimulationViewer:
             raise TypeError("exit display status must be ExitStatus")
         return status.value
 
+    @staticmethod
+    def perception_blocked_overlay(blocked, planner_static):
+        """Keep inflated planner-static cells out of the SLAM wall display."""
+        return bool(blocked and not planner_static)
+
     def _draw_belief_cells(self, belief):
         pygame = self.pygame
         cfg = self.perception_display_config
@@ -224,7 +229,13 @@ class PygameSimulationViewer:
                 ))
                 color = cfg.color_for(
                     observed=bool(belief.observed_mask[gy, gx]),
-                    blocked=bool(belief.blocked_mask[gy, gx]),
+                    # Planner static occupancy is inflated for robot safety.
+                    # Do not draw that inflation as wall geometry: the exact
+                    # non-inflated SLAM occupancy is rendered in _draw_blocked.
+                    blocked=self.perception_blocked_overlay(
+                        belief.blocked_mask[gy, gx],
+                        belief.static_obstacle_map[gy, gx],
+                    ),
                     normalized_cost=normalized,
                 )
                 pygame.draw.rect(self.screen, color, rect)

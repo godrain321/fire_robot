@@ -12,8 +12,12 @@ from mapping.fire_costmap import (
     load_factory_geometry, obstacles_for_initial_robot_map,
 )
 from mapping.grid_map import GridMap
+from navigation.victim_scripted_motion import (
+    ScriptedVictimMotionConfig, ScriptedVictimMotionController,
+)
 from sensors.thermal_camera import ThermalCameraMLX90640
 from simulation.ground_truth import FDSGroundTruthEnvironment
+from world.fire_maps import MapMetadata
 
 
 BASE = Path(__file__).resolve().parents[1]
@@ -112,7 +116,7 @@ def test_thermal_camera_respects_nonzero_mesh_origin():
     assert observations[0].ray_cells[0].grid_position[0] >= 0
 
 
-def test_victim_starts_outside_initial_detection_range():
+def test_victim_starts_hidden_by_slam_occupancy_before_scripted_motion():
     _, _, grid, scenario = _scenario_grid()
     detector = SimpleHumanDetector(scenario["human_detection_range_m"])
     start = scenario["robot_start"]
@@ -122,9 +126,33 @@ def test_victim_starts_outside_initial_detection_range():
         obstacle_map=np.asarray(grid.occupancy, dtype=bool),
         map_origin=(grid.x_min, grid.y_min), map_resolution=grid.resolution,
     )
-    distance = np.hypot(victim["x"] - start["x"], victim["y"] - start["y"])
-    assert distance > scenario["human_detection_range_m"]
+    assert (victim["x"], victim["y"]) == (19.4, 19.0)
     assert detections == []
+
+
+def test_configured_victim_wall_route_reaches_requested_destination():
+    _, _, grid, scenario = _scenario_grid()
+    victim = scenario["humans"][0]
+    motion = ScriptedVictimMotionConfig.from_mapping(victim["scripted_motion"])
+    controller = ScriptedVictimMotionController(
+        # The WorldState metadata contract uses the same origin/resolution.
+        MapMetadata(
+            grid.x_min, grid.x_max, grid.y_min, grid.y_max,
+            grid.resolution, grid.width, grid.height, (grid.x_min, grid.y_min),
+        ),
+        victim["id"], (victim["x"], victim["y"]), motion,
+    )
+    static = np.asarray(grid.occupancy, dtype=bool)
+    dynamic = np.zeros_like(static)
+    for _ in range(200):
+        controller.update(
+            dt=0.1, static_obstacle_map=static,
+            dynamic_obstacle_map=dynamic,
+        )
+        if controller.completed:
+            break
+    assert controller.completed
+    assert controller.position_world == (14.4, 15.0)
 
 
 def test_ground_truth_loads_mock_temperature_and_co(monkeypatch, tmp_path):
