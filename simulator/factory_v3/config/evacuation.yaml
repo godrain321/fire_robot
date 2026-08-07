@@ -28,7 +28,7 @@ robot_motion:
   angular_speed_deg_s: 120.0
 
 display:
-  render_fps: 60
+  render_fps: 30
 
 # The initial pose is hidden from the robot by known SLAM occupancy. The victim
 # then walks along the configured wall-side route until detected.

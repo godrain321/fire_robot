@@ -1973,7 +1973,7 @@ def apply_scenario_config(args):
         args.robot_speed = float(motion_config.get("linear_speed_mps", 1.3))
     display_config = scenario.get("display", {})
     if args.render_fps is None:
-        args.render_fps = int(display_config.get("render_fps", 60))
+        args.render_fps = int(display_config.get("render_fps", 30))
     if args.robot_angular_speed_deg <= 0.0:
         raise ValueError("robot angular speed must be positive")
     if args.render_fps < 1:

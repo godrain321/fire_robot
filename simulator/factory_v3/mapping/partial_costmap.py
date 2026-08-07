@@ -28,7 +28,7 @@ class PartialCostmapConfig(FireCostmapConfig):
     gas_gaussian_sigma: float = 0.5
     selected_fds_start_time: float = 0.0
     simulation_dt: float = 0.1
-    render_fps: int = 60
+    render_fps: int = 30
 
     def __post_init__(self) -> None:
         super().__post_init__()

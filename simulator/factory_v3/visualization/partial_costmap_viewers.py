@@ -695,7 +695,12 @@ class PygameSimulationViewer:
         self._draw_status(snapshot)
 
     def draw(self, *args, **kwargs) -> None:
-        """Render at 30 FPS while simulation state remains at its own rate."""
+        """Run render-only interpolation between two simulation poses.
+
+        This loop never advances simulation time, sensors, Costmap, or A*.
+        The simulation supplies one pose per fixed 10 Hz update; this renderer
+        independently emits the configured number of display-only frames.
+        """
         if len(args) >= 2:
             state = args[1]
         elif "state" in kwargs:
