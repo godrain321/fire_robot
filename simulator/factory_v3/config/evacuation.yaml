@@ -15,9 +15,11 @@ robot_start:
   yaw_deg: -85.70
 
 # TODO temporary until a scenario-specific victim pose is supplied.
+# This free, reachable point is outside the robot's initial 10 m detection range,
+# so exit exploration begins before the victim can be detected.
 humans:
   # Coordinates are factory_v3 FDS world metres.
-  - {id: victim_1, x: 16.0, y: 15.0, initial_status: undetected}
+  - {id: victim_1, x: 22.0, y: 24.0, initial_status: undetected}
 dynamic_obstacles: []
 human_detection_range_m: 10.0
 victim_approach_distance_m: 1.0

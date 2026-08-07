@@ -82,17 +82,19 @@ def test_thermal_camera_respects_nonzero_mesh_origin():
     assert observations[0].ray_cells[0].grid_position[0] >= 0
 
 
-def test_human_detector_uses_map_origin_and_line_of_sight():
+def test_victim_starts_outside_initial_detection_range():
     _, _, grid, scenario = _scenario_grid()
     detector = SimpleHumanDetector(scenario["human_detection_range_m"])
     start = scenario["robot_start"]
+    victim = scenario["humans"][0]
     detections = detector.detect(
         (start["x"], start["y"]), scenario["humans"],
         obstacle_map=np.asarray(grid.occupancy, dtype=bool),
         map_origin=(grid.x_min, grid.y_min), map_resolution=grid.resolution,
     )
-    assert [item["id"] for item in detections] == ["victim_1"]
-    assert all(item["distance"] <= scenario["human_detection_range_m"] for item in detections)
+    distance = np.hypot(victim["x"] - start["x"], victim["y"] - start["y"])
+    assert distance > scenario["human_detection_range_m"]
+    assert detections == []
 
 
 def test_ground_truth_loads_mock_temperature_and_co(monkeypatch, tmp_path):
