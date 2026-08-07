@@ -64,6 +64,8 @@ def test_stage6_yaml_sections_load():
     assert scenario["mission_entry_id"] == "MISSION_ENTRY"
     assert scenario["evacuation_route_selection"]["fire_information_strategy"] == "evaluate_all_exits"
     assert scenario["evacuation_route_selection"]["no_fire_information_strategy"] == "nearest_reachable_exit"
+    assert scenario["hazard_knowledge"]["temperature_elevated_c"] == 35.0
+    assert scenario["hazard_knowledge"]["co_elevated_ppm"] == 100.0
     assert scenario["replanning"]["max_replan_attempts"] == 5
 
 

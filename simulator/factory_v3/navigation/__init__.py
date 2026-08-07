@@ -9,7 +9,8 @@ from .travel_history import (
 from .evacuation_strategy_selector import (
     EvacuationRouteDecision, EvacuationRouteSelectionConfig,
     EvacuationStrategy, EvacuationStrategySelector,
-    HazardKnowledgeDecision, HazardKnowledgeState, HazardKnowledgeTracker,
+    HazardKnowledgeConfig, HazardKnowledgeDecision, HazardKnowledgeState,
+    HazardKnowledgeTracker,
     PathValidationConfig, ReplanningConfig, RouteFailureReason,
 )
 from .path_simplifier import (
@@ -25,7 +26,7 @@ __all__ = [
     "TravelRecordReason",
     "EvacuationRouteDecision", "EvacuationRouteSelectionConfig",
     "EvacuationStrategy", "EvacuationStrategySelector",
-    "HazardKnowledgeDecision", "HazardKnowledgeState",
+    "HazardKnowledgeConfig", "HazardKnowledgeDecision", "HazardKnowledgeState",
     "HazardKnowledgeTracker", "PathValidationConfig", "ReplanningConfig",
     "RouteFailureReason",
     "PathSimplificationConfig", "PathSimplificationResult", "PathRiskConfig",

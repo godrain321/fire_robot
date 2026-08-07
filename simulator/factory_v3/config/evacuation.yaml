@@ -71,6 +71,13 @@ exit_selection:
 # The mission entry position is robot_start; it is not inferred from the
 # nearest exit. Fire thresholds reuse PartialCostmapConfig (60 C, 1600 ppm).
 mission_entry_id: MISSION_ENTRY
+# These thresholds classify whether the robot has meaningful fire evidence.
+# They are intentionally higher than normal ambient readings and lower than
+# the hard movement blocks (60 C and 1600 ppm).
+hazard_knowledge:
+  temperature_elevated_c: 35.0
+  co_elevated_ppm: 100.0
+
 evacuation_route_selection:
   enabled: true
   # With no fire evidence, start toward the shortest reachable exit and use

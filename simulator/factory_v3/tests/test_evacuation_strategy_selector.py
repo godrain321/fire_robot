@@ -5,8 +5,8 @@ import pytest
 
 from navigation.evacuation_strategy_selector import (
     EvacuationRouteSelectionConfig, EvacuationStrategy,
-    EvacuationStrategySelector, HazardKnowledgeTracker, PathValidationConfig,
-    ReplanningConfig,
+    EvacuationStrategySelector, HazardKnowledgeConfig, HazardKnowledgeTracker,
+    PathValidationConfig, ReplanningConfig,
 )
 from navigation.return_path_planner import ReturnPathConfig, ReturnPathPlanner
 from navigation.travel_history import TravelHistory
@@ -130,6 +130,10 @@ def test_settings_reject_invalid_values():
         EvacuationRouteSelectionConfig(route_cost_increase_ratio=1.0)
     with pytest.raises(ValueError):
         EvacuationRouteSelectionConfig(route_cost_min_absolute_increase=-0.1)
+    with pytest.raises(ValueError):
+        HazardKnowledgeConfig(temperature_elevated_c=-1)
+    with pytest.raises(ValueError):
+        HazardKnowledgeConfig.from_mapping({"unknown": 1})
     with pytest.raises(ValueError):
         ReplanningConfig(max_replan_attempts=-1)
     with pytest.raises(ValueError):

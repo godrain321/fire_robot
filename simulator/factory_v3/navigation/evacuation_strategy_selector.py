@@ -206,6 +206,33 @@ class ReplanningConfig:
         return cls(**values)
 
 
+@dataclass(frozen=True)
+class HazardKnowledgeConfig:
+    """Thresholds for declaring meaningful sensor-derived fire evidence."""
+
+    temperature_elevated_c: float = 35.0
+    co_elevated_ppm: float = 100.0
+
+    def __post_init__(self) -> None:
+        for name in self.__dataclass_fields__:
+            value = getattr(self, name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or float(value) < 0.0
+            ):
+                raise ValueError(f"{name} must be a finite non-negative number")
+
+    @classmethod
+    def from_mapping(cls, values):
+        values = dict(values or {})
+        unknown = set(values) - set(cls.__dataclass_fields__)
+        if unknown:
+            raise ValueError(f"unknown hazard_knowledge settings: {sorted(unknown)}")
+        return cls(**values)
+
+
 class HazardKnowledgeTracker:
     """Sticky mission-scoped knowledge derived only from estimated observations."""
 

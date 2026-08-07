@@ -24,8 +24,8 @@ from mission.mission_manager import MissionEvent, MissionManager, MissionState
 from navigation.return_path_planner import ReturnPathConfig, ReturnPathPlanner
 from navigation.evacuation_strategy_selector import (
     EvacuationRouteSelectionConfig, EvacuationStrategy,
-    EvacuationStrategySelector, HazardKnowledgeState, HazardKnowledgeTracker,
-    PathValidationConfig, ReplanningConfig,
+    EvacuationStrategySelector, HazardKnowledgeConfig, HazardKnowledgeState,
+    HazardKnowledgeTracker, PathValidationConfig, ReplanningConfig,
 )
 from navigation.travel_history import TravelHistory, TravelHistoryConfig
 from navigation.path_simplifier import (
@@ -201,9 +201,14 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         exit_evaluator,
         ExitSelectionConfig.from_mapping(args.exit_selection_config),
     )
+    hazard_knowledge_config = HazardKnowledgeConfig.from_mapping(
+        args.hazard_knowledge_config
+    )
     hazard_tracker = HazardKnowledgeTracker(
-        temperature_elevated_c=config.temperature_safe,
-        co_elevated_ppm=config.co_safe,
+        temperature_elevated_c=(
+            hazard_knowledge_config.temperature_elevated_c
+        ),
+        co_elevated_ppm=hazard_knowledge_config.co_elevated_ppm,
     )
     strategy_selector = EvacuationStrategySelector(
         world.map_metadata, hazard_tracker, return_planner, evacuation_planner,
@@ -1274,6 +1279,7 @@ def apply_scenario_config(args):
     args.evacuation_route_selection_config = scenario.get(
         "evacuation_route_selection", {}
     )
+    args.hazard_knowledge_config = scenario.get("hazard_knowledge", {})
     args.path_validation_config = scenario.get("path_validation", {})
     args.replanning_config = scenario.get("replanning", {})
     args.path_simplification_config = scenario.get("path_simplification", {})
