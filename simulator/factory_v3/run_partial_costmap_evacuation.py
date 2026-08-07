@@ -17,6 +17,7 @@ from mapping.fire_costmap import (
     load_factory_geometry, obstacles_for_initial_robot_map,
 )
 from mapping.grid_map import GridMap
+from mapping.fire_localization import FireLocalizationConfig, FireLocalizer
 from mapping.partial_costmap import (
     PartialCostmapConfig,
     PartialFireCostmap,
@@ -202,6 +203,11 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     display_static_map = np.asarray(display_grid_map.occupancy, dtype=bool)
     belief = PartialFireCostmap(grid_map, static_map, config)
     world = WorldState.from_scenario(args.scenario, grid_map, config)
+    fire_localizer = FireLocalizer(
+        world.map_metadata,
+        world.static_obstacle_map,
+        FireLocalizationConfig.from_mapping(args.fire_localization_config),
+    )
     # Existing detector and viewer APIs remain dictionary-based adapters.
     args.humans = world.legacy_humans()
     args.exits = world.legacy_exits()
@@ -547,6 +553,11 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             thermal_update = belief.update_thermal_observations(
                 latest_thermal, rays, fds_time
             )
+            if fire_localizer.config.enabled:
+                fire_localizer.add_thermal_observation(
+                    f"thermal:{sim_elapsed:.9f}", sim_elapsed,
+                    (state.x, state.y, state.theta), rays,
+                )
             gas = ground_truth.measure_co(
                 gas_sensor, state, fds_time,
                 config.sensor_update_interval_seconds,
@@ -556,14 +567,49 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     state.x, state.y, gas.reading.measured_ppm, fds_time
                 )
                 latest_co_text = f"{gas.reading.measured_ppm:.1f} ppm"
+                if fire_localizer.config.enabled:
+                    thermal_values = np.asarray(latest_thermal, dtype=float)
+                    center_start = thermal_values.shape[1] // 3
+                    center_end = thermal_values.shape[1] - center_start
+                    finite_thermal = thermal_values[:, center_start:center_end]
+                    finite_thermal = finite_thermal[np.isfinite(finite_thermal)]
+                    local_temperature = (
+                        float(finite_thermal.max()) if finite_thermal.size else 25.0
+                    )
+                    fire_localizer.add_co_observation(
+                        f"co:{sim_elapsed:.9f}", sim_elapsed,
+                        (state.x, state.y, state.theta),
+                        gas.reading.measured_ppm, local_temperature,
+                        thermal_direction_supported=any(
+                            ray.valid
+                            and center_start <= ray.col < center_end
+                            and math.isfinite(float(ray.pixel_temperature))
+                            and float(ray.pixel_temperature)
+                            >= fire_localizer.config.thermal_warning_threshold_c
+                            for ray in rays
+                        ),
+                    )
             else:
                 from mapping.partial_costmap import BeliefUpdate
                 co_update = BeliefUpdate(frozenset(), frozenset())
                 latest_co_text = "invalid"
+            if fire_localizer.config.enabled:
+                localization_update = belief.update_estimated_fire_probability(
+                    fire_localizer.fire_probability,
+                    cost_weight=fire_localizer.config.estimated_fire_cost_weight,
+                    minimum_probability=(
+                        fire_localizer.config.possible_probability_threshold
+                    ),
+                )
+            else:
+                from mapping.partial_costmap import BeliefUpdate
+                localization_update = BeliefUpdate(frozenset(), frozenset())
             _, newly_blocked = _combine_updates(
-                thermal_update, co_update
+                thermal_update, co_update, localization_update
             )
             world.estimated_fire_map.sync_from_belief(belief)
+            world.estimated_fire_map.sync_fire_localization(fire_localizer)
+            world.fire_localization_result = fire_localizer.latest_result
             world.update_costmap_revision(belief.revision)
             # Capture hazard knowledge at observation time so later normal
             # readings do not erase evidence seen earlier in the mission.
@@ -1566,6 +1612,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     selected_exit,
                     world.active_path_simplification,
                     victim_follower,
+                    world.fire_localization_result,
                 )
                 pygame_viewer.close()
             if thermal_viewer is not None:
@@ -1599,6 +1646,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                 selected_exit,
                 world.active_path_simplification,
                 victim_follower,
+                world.fire_localization_result,
             )
         sim_elapsed += config.simulation_dt
 
@@ -1729,6 +1777,7 @@ def apply_scenario_config(args):
     args.replanning_config = scenario.get("replanning", {})
     args.path_simplification_config = scenario.get("path_simplification", {})
     args.victim_following_config = scenario.get("victim_following", {})
+    args.fire_localization_config = scenario.get("fire_localization", {})
     return args
 
 

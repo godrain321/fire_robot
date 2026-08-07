@@ -92,6 +92,7 @@ class WorldState:
         self.mission_entry_id: str | None = None
         self.mission_entry_position_world: tuple[float, float] | None = None
         self.hazard_knowledge_decision = None
+        self.fire_localization_result = None
         self.active_route_decision = None
         self.active_route_valid = False
         self.active_route_invalid_reason: str | None = None
@@ -684,6 +685,7 @@ class WorldState:
             "mission_entry_id": self.mission_entry_id,
             "mission_entry_position_world": self.mission_entry_position_world,
             "hazard_knowledge_decision": self.hazard_knowledge_decision,
+            "fire_localization_result": self.fire_localization_result,
             "active_route_decision": self.active_route_decision,
             "active_route_valid": self.active_route_valid,
             "active_route_invalid_reason": self.active_route_invalid_reason,
@@ -752,6 +754,13 @@ class WorldState:
                 "co_ppm": self.estimated_fire_map.co_ppm,
                 "observed_mask": self.estimated_fire_map.observed_mask,
                 "last_observed_time": self.estimated_fire_map.last_observed_time,
+                "thermal_fire_evidence": self.estimated_fire_map.thermal_fire_evidence,
+                "co_gradient_evidence": self.estimated_fire_map.co_gradient_evidence,
+                "combined_fire_evidence": self.estimated_fire_map.combined_fire_evidence,
+                "fire_probability": self.estimated_fire_map.fire_probability,
+                "fire_observation_count": self.estimated_fire_map.fire_observation_count,
+                "fire_last_observed_time": self.estimated_fire_map.fire_last_observed_time,
+                "fire_localization_result": self.estimated_fire_map.fire_localization_result,
             },
         }
         result = _json_value(payload)

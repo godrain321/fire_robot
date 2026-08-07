@@ -290,6 +290,7 @@ class PygameSimulationViewer:
             f"Mission: {snapshot['mission_state']}",
             f"Navigation: {snapshot['navigation_mode']}",
             f"Hazard knowledge: {snapshot.get('hazard_knowledge', 'UNDECIDED')}",
+            f"Fire estimate: {snapshot.get('fire_estimate', 'UNOBSERVED')}",
             f"Strategy: {snapshot.get('evacuation_strategy', 'UNDECIDED')}",
             f"Route failure: {snapshot.get('route_failure', 'none')}",
             f"Path O/C/F: {snapshot.get('path_simplification', 'N/A')}",
@@ -312,13 +313,31 @@ class PygameSimulationViewer:
         newly_observed_cells, snapshot, humans=(), exits=(), detected_ids=(),
         travel_history=(), return_path=(), blocked_return_grid=None,
         exit_evaluations=(), selected_exit_id=None, path_simplification=None,
-        victim_following=None,
+        victim_following=None, fire_localization=None,
     ) -> None:
         snapshot = dict(snapshot)
         snapshot["observed_ratio"] = float(belief.observed_mask.mean() * 100.0)
         self.screen.fill(self.BACKGROUND)
         self._draw_belief_cells(belief)
         self._draw_blocked(belief)
+        if fire_localization is not None:
+            for col, row in fire_localization.candidate_cells_grid:
+                overlay = self.pygame.Surface(
+                    self.transform.grid_rect(col, row).size,
+                    self.pygame.SRCALPHA,
+                )
+                overlay.fill((255, 70, 20, 75))
+                self.screen.blit(overlay, self.transform.grid_rect(col, row).topleft)
+            if fire_localization.highest_probability_world is not None:
+                peak = self.transform.world_to_screen(
+                    *fire_localization.highest_probability_world
+                )
+                self.pygame.draw.circle(self.screen, (255, 30, 20), peak, 9, 3)
+            snapshot["fire_estimate"] = (
+                f"{fire_localization.state.name} "
+                f"p={fire_localization.highest_probability:.3f}, "
+                f"obs={fire_localization.valid_observation_count}"
+            )
         self._draw_sensor_area(
             state, camera, newly_observed_cells, self.config.gas_update_radius
         )
@@ -398,8 +417,12 @@ class PygameSimulationViewer:
             self.pygame.Rect(1035, 55, 220, 205), "CO cost",
         )
         self._draw_mini_layer(
+            belief.estimated_fire_cost_map,
+            self.pygame.Rect(770, 340, 220, 205), "Estimated fire cost",
+        )
+        self._draw_mini_layer(
             belief.final_cost_map,
-            self.pygame.Rect(900, 340, 220, 205), "Final costmap",
+            self.pygame.Rect(1035, 340, 220, 205), "Final costmap",
             blocked=belief.blocked_mask,
         )
         self._draw_status(snapshot)

@@ -89,6 +89,7 @@ class PartialFireCostmap:
         self.temperature_cost_map = np.zeros(shape, dtype=float)
         self.co_cost_map = np.zeros(shape, dtype=float)
         self.unknown_cost_map = np.zeros(shape, dtype=float)
+        self.estimated_fire_cost_map = np.zeros(shape, dtype=float)
         self.blocked_mask = static.copy()
         self.final_cost_map = np.full(shape, config.base_cost, dtype=float)
         self.last_observed_time_map = np.full(shape, np.nan, dtype=float)
@@ -210,6 +211,29 @@ class PartialFireCostmap:
                 changed.add(node)
         return self._finish_update(changed, old_blocked)
 
+    def update_estimated_fire_probability(
+        self, probability_map, *, cost_weight: float,
+        minimum_probability: float,
+    ) -> BeliefUpdate:
+        """Apply a finite sensor-inferred risk layer without creating blocks."""
+        values = np.asarray(probability_map, dtype=float)
+        if values.shape != self.shape:
+            raise ValueError(f"fire probability shape={values.shape}, expected={self.shape}")
+        if not np.all(np.isfinite(values)) or np.any((values < 0.0) | (values > 1.0)):
+            raise ValueError("fire probabilities must be finite and in [0,1]")
+        if cost_weight < 0.0 or not 0.0 <= minimum_probability <= 1.0:
+            raise ValueError("invalid estimated fire cost settings")
+        old_blocked = self._snapshot_blocked()
+        new_cost = np.where(
+            values >= minimum_probability, values * float(cost_weight), 0.0
+        )
+        changed_indices = np.argwhere(~np.isclose(
+            new_cost, self.estimated_fire_cost_map, rtol=1e-9, atol=1e-12
+        ))
+        changed = {(int(col), int(row)) for row, col in changed_indices}
+        self.estimated_fire_cost_map = new_cost
+        return self._finish_update(changed, old_blocked)
+
     def recalculate(self) -> None:
         """Rebuild costs using observed values and per-modality uncertainty."""
         cfg = self.config
@@ -264,6 +288,7 @@ class PartialFireCostmap:
             + self.temperature_cost_map
             + self.co_cost_map
             + self.unknown_cost_map
+            + self.estimated_fire_cost_map
         )
         self.final_cost_map[self.blocked_mask] = np.inf
         self._validate_layers()
@@ -275,6 +300,7 @@ class PartialFireCostmap:
             "temperature_observed_mask", "co_observed_mask",
             "temperature_belief_map", "co_belief_map",
             "temperature_cost_map", "co_cost_map", "unknown_cost_map",
+            "estimated_fire_cost_map",
             "blocked_mask", "final_cost_map", "last_observed_time_map",
         )
         mismatches = {

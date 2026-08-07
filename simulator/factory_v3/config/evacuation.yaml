@@ -110,6 +110,38 @@ hazard_knowledge:
   temperature_elevated_c: 35.0
   co_elevated_ppm: 100.0
 
+# Sensor-only fire-source inference.  This never reads the FDS source position
+# or full Ground Truth arrays. Direct 60 C / 1600 ppm movement blocks remain in
+# PartialCostmapConfig and are not duplicated here.
+fire_localization:
+  enabled: true
+  prior_probability: 0.05
+  possible_probability_threshold: 0.40
+  likely_probability_threshold: 0.65
+  confirm_probability_threshold: 0.80
+  release_probability_threshold: 0.70
+  thermal_warning_threshold_c: 40.0
+  thermal_strong_threshold_c: 60.0
+  thermal_evidence_weight: 1.0
+  co_rise_threshold_ppm: 5.0
+  temperature_rise_threshold_c: 2.0
+  minimum_robot_motion_m: 0.2
+  co_gradient_evidence_weight: 0.4
+  minimum_consecutive_co_rises: 2
+  maximum_observation_interval_s: 2.0
+  minimum_distinct_observation_poses: 2
+  minimum_confirmation_observations: 3
+  distinct_pose_distance_m: 0.5
+  distinct_heading_deg: 15.0
+  maximum_evidence_per_update: 1.0
+  maximum_accumulated_evidence: 8.0
+  evidence_decay_per_second: 0.001
+  candidate_probability_threshold: 0.50
+  maximum_confirmed_region_cells: 250
+  estimated_fire_cost_weight: 50.0
+  co_projection_distance_m: 4.0
+  co_projection_half_angle_deg: 15.0
+
 evacuation_route_selection:
   enabled: true
   # With no fire evidence, start toward the shortest reachable exit and use
