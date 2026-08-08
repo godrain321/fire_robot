@@ -343,7 +343,9 @@ class PygameSimulationViewer:
         rgb[safe] = cfg.safe_color
         rgb[caution] = cfg.caution_color
         rgb[danger] = cfg.danger_color
-        rgb[planner_static] = cfg.blocked_color
+        # Planner static occupancy includes robot-clearance inflation.  It is
+        # intentionally not painted here: the exact, non-inflated SLAM walls
+        # are composited by ``_draw_blocked`` after this belief surface.
         if self.overlay_config.show_dynamic_obstacles:
             rgb[np.asarray(belief.dynamic_obstacle_map, dtype=bool)] = (
                 cfg.dynamic_obstacle_color

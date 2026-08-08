@@ -64,6 +64,28 @@ def test_belief_map_colors_use_absolute_temperature_and_co_thresholds():
     assert tuple(rgb[1, 2]) == cfg.danger_color
 
 
+def test_planner_inflation_is_not_painted_as_slam_wall():
+    viewer = object.__new__(PygameSimulationViewer)
+    viewer.perception_display_config = PerceptionMapDisplayConfig()
+    viewer.overlay_config = MapOverlayConfig(show_dynamic_obstacles=False)
+    viewer.grid_map = SimpleNamespace(height=1, width=2)
+    belief = SimpleNamespace(
+        observed_mask=np.array([[False, True]], dtype=bool),
+        temperature_observed_mask=np.zeros((1, 2), dtype=bool),
+        co_observed_mask=np.zeros((1, 2), dtype=bool),
+        temperature_belief_map=np.full((1, 2), np.nan),
+        co_belief_map=np.full((1, 2), np.nan),
+        # Both cells are blocked only in the inflated planner map. Exact SLAM
+        # wall pixels are rendered later from display_static_obstacle_map.
+        static_obstacle_map=np.ones((1, 2), dtype=bool),
+        dynamic_obstacle_map=np.zeros((1, 2), dtype=bool),
+    )
+    rgb = viewer._belief_rgb_array(belief)
+    cfg = viewer.perception_display_config
+    assert tuple(rgb[0, 0]) == cfg.unknown_color
+    assert tuple(rgb[0, 1]) == cfg.safe_color
+
+
 @pytest.mark.parametrize("values", [
     {"unknown_color": [-1, 0, 0]},
     {"safe_color": [0, 0]},
