@@ -65,6 +65,40 @@ def test_victim_stops_before_an_occupied_segment():
     assert controller.position_world == (1.0, 1.0)
 
 
+def test_detected_victim_walks_toward_robot_and_keeps_stop_distance():
+    controller = ScriptedVictimMotionController(
+        metadata(), "V1", (1, 1), config(speed_mps=1.2)
+    )
+    free = np.zeros((21, 21), bool)
+    moved = controller.move_toward(
+        (3, 1), dt=0.5, stop_distance_m=1.0,
+        static_obstacle_map=free, dynamic_obstacle_map=free,
+    )
+    assert moved == pytest.approx(0.6)
+    assert controller.position_world == pytest.approx((1.6, 1.0))
+    moved = controller.move_toward(
+        (2.0, 1.0), dt=1.0, stop_distance_m=1.0,
+        static_obstacle_map=free, dynamic_obstacle_map=free,
+    )
+    assert moved == 0.0
+    assert controller.position_world == pytest.approx((1.6, 1.0))
+
+
+def test_detected_victim_approach_does_not_cross_obstacle():
+    controller = ScriptedVictimMotionController(
+        metadata(), "V1", (1, 1), config(speed_mps=1.2)
+    )
+    static = np.zeros((21, 21), bool)
+    static[5, 6] = True
+    moved = controller.move_toward(
+        (3, 1), dt=0.5, stop_distance_m=0.0,
+        static_obstacle_map=static,
+        dynamic_obstacle_map=np.zeros_like(static),
+    )
+    assert moved == 0.0
+    assert controller.position_world == (1.0, 1.0)
+
+
 @pytest.mark.parametrize("values", [
     {"enabled": True, "speed_mps": 0, "waypoints_world": ((0, 0), (1, 1))},
     {"enabled": True, "speed_mps": 1, "waypoints_world": ((0, 0),)},

@@ -91,6 +91,40 @@ class ScriptedVictimMotionController:
                 self._advance_waypoint()
         return moved
 
+    def move_toward(
+        self, target_world, *, dt, stop_distance_m,
+        static_obstacle_map, dynamic_obstacle_map,
+    ):
+        """Walk toward a detected robot without teleporting or crossing obstacles."""
+        if dt <= 0.0:
+            return 0.0
+        target = (float(target_world[0]), float(target_world[1]))
+        if not all(math.isfinite(value) for value in target):
+            raise ValueError("victim approach target must be finite")
+        if not math.isfinite(stop_distance_m) or stop_distance_m < 0.0:
+            raise ValueError("victim approach stop distance must be non-negative")
+        static = np.asarray(static_obstacle_map, dtype=bool)
+        dynamic = np.asarray(dynamic_obstacle_map, dtype=bool)
+        expected = (self.metadata.height, self.metadata.width)
+        if static.shape != expected or dynamic.shape != expected:
+            raise ValueError("victim approach obstacle map shape mismatch")
+        distance = math.dist(self.position_world, target)
+        available = max(0.0, distance - float(stop_distance_m))
+        step = min(self.config.speed_mps * float(dt), available)
+        if step <= 1e-12:
+            return 0.0
+        ratio = step / distance
+        candidate = (
+            self.position_world[0] + (target[0] - self.position_world[0]) * ratio,
+            self.position_world[1] + (target[1] - self.position_world[1]) * ratio,
+        )
+        if not self._segment_is_free(
+            self.position_world, candidate, static, dynamic
+        ):
+            return 0.0
+        self.position_world = candidate
+        return float(step)
+
     def _advance_waypoint(self):
         self.next_waypoint_index += 1
         if self.next_waypoint_index >= len(self.config.waypoints_world):

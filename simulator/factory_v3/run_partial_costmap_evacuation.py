@@ -1126,6 +1126,24 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         for victim_id, controller in scripted_victim_motions.items():
             victim = world.get_victim(victim_id)
             if (
+                active_victim is not None
+                and active_victim["id"] == victim_id
+                and not victim_reached
+                and victim.status in (
+                    VictimStatus.DETECTED, VictimStatus.APPROACHING,
+                )
+            ):
+                controller.move_toward(
+                    (state.x, state.y), dt=config.simulation_dt,
+                    stop_distance_m=args.victim_approach_distance,
+                    static_obstacle_map=world.static_obstacle_map,
+                    dynamic_obstacle_map=world.dynamic_obstacle_mask(),
+                )
+                world.update_victim_position(
+                    victim_id, controller.position_world
+                )
+                continue
+            if (
                 controller.completed
                 or (
                     controller.config.stop_when_detected
@@ -1140,6 +1158,15 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             )
             world.update_victim_position(victim_id, controller.position_world)
         args.humans = world.legacy_humans()
+
+        if active_victim is not None and not victim_reached:
+            current_victim = world.get_victim(active_victim["id"])
+            active_victim["x"], active_victim["y"] = (
+                current_victim.position_world
+            )
+            active_victim["distance"] = math.dist(
+                (state.x, state.y), current_victim.position_world
+            )
 
         detections = human_detector.detect(
             robot_position=(state.x, state.y),
@@ -1243,10 +1270,6 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     EvacuationStrategy.NEAREST_REACHABLE_EXIT,
                 ):
                     evacuation_plan = route_decision.evacuation_plan
-                    selected = (
-                        None if evacuation_plan is None
-                        else evacuation_plan.selected_evaluation
-                    )
                     selected_exit = route_decision.target_exit_id
                     metrics.selected_exit = selected_exit
                     goal = route_decision.target_position_world
@@ -1256,21 +1279,6 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                         selection_reason=route_decision.reasons[0],
                         sim_time=sim_elapsed,
                     )
-                    if (
-                        selected is not None
-                        and selected.unknown_ratio is not None
-                        and selected.unknown_ratio
-                        <= exit_evaluator.config.usable_confirmation_max_unknown_ratio
-                    ):
-                        world.update_exit_status(
-                            selected_exit, ExitStatus.USABLE,
-                            sim_time=sim_elapsed,
-                            temperature_c=selected.exit_temperature_c
-                            if selected.exit_temperature_c is not None else np.nan,
-                            co_ppm=selected.exit_co_ppm
-                            if selected.exit_co_ppm is not None else np.nan,
-                            path_cost=selected.accumulated_risk_cost,
-                        )
                     simplified = activate_simplified_path(
                         route_decision.path_grid, goal_world=goal
                     )
