@@ -192,7 +192,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         inflation_radius=args.inflation_radius,
     )
     ground_truth = FDSGroundTruthEnvironment(
-        args.fds_file, args.temperature_npz, args.fds_dir
+        args.fds_file, args.temperature_npz, args.fds_dir, args.co_npz
     )
     mission = MissionManager(
         victim_reached_distance_m=args.victim_approach_distance,
@@ -1926,6 +1926,10 @@ def parse_args():
         "--temperature-npz", type=Path,
         default=base / "processed/fds_temperature_3d_timeseries.npz",
     )
+    parser.add_argument(
+        "--co-npz", type=Path,
+        default=base / "processed/fds_co_2d_timeseries.npz",
+    )
     parser.add_argument("--start", type=float, nargs=2, default=None)
     parser.add_argument("--start-theta", type=float, default=None)
     parser.add_argument("--grid-resolution", type=float, default=None)
@@ -1971,6 +1975,11 @@ def apply_scenario_config(args):
         args.temperature_npz
         if args.temperature_npz != Path(__file__).resolve().parent / "processed/fds_temperature_3d_timeseries.npz"
         else base / scenario["temperature_npz"]
+    )
+    args.co_npz = (
+        args.co_npz
+        if args.co_npz != Path(__file__).resolve().parent / "processed/fds_co_2d_timeseries.npz"
+        else base / scenario["co_npz"]
     )
     args.start = tuple(args.start or _point(scenario["robot_start"]))
     args.start_theta = (
