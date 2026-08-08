@@ -3,7 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHID="factory_v3_cat"
-T_END=700
+# Current factory_v3 FDS output contains t=0..200 s (201 frames).
+T_END=201
 VAR_INDEX=1
 OUT_DIR="${SCRIPT_DIR}/csv_temp3d"
 FDS2ASCII="${FDS2ASCII:-/home/park/FDS/FDS6/bin/fds2ascii}"
@@ -50,4 +51,3 @@ EOF
 done
 
 echo "Temperature CSV export complete: ${OUT_DIR}"
-
