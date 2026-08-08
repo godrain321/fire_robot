@@ -32,9 +32,10 @@ class PerceptionMapDisplayConfig:
     danger_color: tuple[int, int, int] = (210, 50, 50)
     blocked_color: tuple[int, int, int] = (25, 25, 25)
     dynamic_obstacle_color: tuple[int, int, int] = (120, 40, 150)
-    safe_cost_max: float = 0.25
-    caution_cost_max: float = 0.60
-    danger_cost_max: float = 0.99
+    temperature_caution_c: float = 40.0
+    temperature_danger_c: float = 60.0
+    co_caution_ppm: float = 100.0
+    co_danger_ppm: float = 1600.0
 
     @classmethod
     def from_mapping(cls, values):
@@ -56,19 +57,37 @@ class PerceptionMapDisplayConfig:
             "blocked_color", "dynamic_obstacle_color",
         ):
             object.__setattr__(self, name, _rgb(getattr(self, name), name))
-        if not 0 <= self.safe_cost_max < self.caution_cost_max < self.danger_cost_max <= 1:
-            raise ValueError("display cost thresholds must increase within [0,1]")
+        thresholds = (
+            self.temperature_caution_c, self.temperature_danger_c,
+            self.co_caution_ppm, self.co_danger_ppm,
+        )
+        if not all(math.isfinite(value) for value in thresholds):
+            raise ValueError("display hazard thresholds must be finite")
+        if self.temperature_caution_c >= self.temperature_danger_c:
+            raise ValueError("temperature caution threshold must be below danger")
+        if self.co_caution_ppm >= self.co_danger_ppm:
+            raise ValueError("CO caution threshold must be below danger")
 
-    def color_for(self, *, observed, blocked, normalized_cost):
-        if blocked:
+    def color_for(
+        self, *, observed, obstacle_blocked=False,
+        temperature_c=None, co_ppm=None,
+    ):
+        """Classify by absolute observed hazards, never relative map cost."""
+        if obstacle_blocked:
             return self.blocked_color
         if not observed:
             return self.unknown_color
-        if normalized_cost <= self.safe_cost_max:
-            return self.safe_color
-        if normalized_cost <= self.caution_cost_max:
+        temperature_valid = temperature_c is not None and math.isfinite(temperature_c)
+        co_valid = co_ppm is not None and math.isfinite(co_ppm)
+        if (
+            temperature_valid and temperature_c >= self.temperature_danger_c
+        ) or (co_valid and co_ppm >= self.co_danger_ppm):
+            return self.danger_color
+        if (
+            temperature_valid and temperature_c >= self.temperature_caution_c
+        ) or (co_valid and co_ppm >= self.co_caution_ppm):
             return self.caution_color
-        return self.danger_color
+        return self.safe_color
 
 
 @dataclass(frozen=True)
@@ -285,42 +304,41 @@ class PygameSimulationViewer:
         return surface
 
     def _belief_rgb_array(self, belief):
-        """Vectorize belief classification without mutating planner arrays."""
+        """Classify absolute observed temperature/CO without relative scaling."""
         cfg = self.perception_display_config
-        costs = np.asarray(belief.final_cost_map, dtype=float)
         observed = np.asarray(belief.observed_mask, dtype=bool)
-        blocked = np.asarray(belief.blocked_mask, dtype=bool)
+        temperature_observed = np.asarray(
+            belief.temperature_observed_mask, dtype=bool
+        )
+        co_observed = np.asarray(belief.co_observed_mask, dtype=bool)
+        temperatures = np.asarray(belief.temperature_belief_map, dtype=float)
+        co_values = np.asarray(belief.co_belief_map, dtype=float)
         planner_static = np.asarray(belief.static_obstacle_map, dtype=bool)
         expected = (self.grid_map.height, self.grid_map.width)
         if any(item.shape != expected for item in (
-            costs, observed, blocked, planner_static,
+            observed, temperature_observed, co_observed, temperatures,
+            co_values, planner_static,
         )):
             raise ValueError("belief display layers must match the grid shape")
 
-        finite = costs[np.isfinite(costs) & ~blocked]
-        base = float(self.config.base_cost)
-        cost_max = max(
-            float(finite.max()) if finite.size else base + 1.0,
-            base + 1e-9,
-        )
-        normalized = np.ones(expected, dtype=float)
-        finite_cells = np.isfinite(costs)
-        normalized[finite_cells] = np.clip(
-            (costs[finite_cells] - base) / max(cost_max - base, 1e-9),
-            0.0, 1.0,
-        )
-
         rgb = np.empty(expected + (3,), dtype=np.uint8)
         rgb[:] = cfg.unknown_color
-        safe = observed & (normalized <= cfg.safe_cost_max)
-        caution = observed & (normalized > cfg.safe_cost_max) & (
-            normalized <= cfg.caution_cost_max
+        temperature_danger = temperature_observed & (
+            temperatures >= cfg.temperature_danger_c
         )
-        danger = observed & (normalized > cfg.caution_cost_max)
+        co_danger = co_observed & (co_values >= cfg.co_danger_ppm)
+        danger = temperature_danger | co_danger
+        caution = ~danger & (
+            (temperature_observed & (
+                temperatures >= cfg.temperature_caution_c
+            ))
+            | (co_observed & (co_values >= cfg.co_caution_ppm))
+        )
+        safe = observed & ~caution & ~danger
         rgb[safe] = cfg.safe_color
         rgb[caution] = cfg.caution_color
         rgb[danger] = cfg.danger_color
-        rgb[blocked & ~planner_static] = cfg.blocked_color
+        rgb[planner_static] = cfg.blocked_color
         if self.overlay_config.show_dynamic_obstacles:
             rgb[np.asarray(belief.dynamic_obstacle_map, dtype=bool)] = (
                 cfg.dynamic_obstacle_color

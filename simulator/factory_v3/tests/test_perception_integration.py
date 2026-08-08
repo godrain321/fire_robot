@@ -69,7 +69,9 @@ def test_main_view_uses_robot_belief_and_mapper_has_no_ground_truth_input():
 
     draw_source = inspect.getsource(PygameSimulationViewer._belief_rgb_array)
     mapper_source = inspect.getsource(mapping_module)
-    assert "belief.final_cost_map" in draw_source
+    assert "belief.temperature_belief_map" in draw_source
+    assert "belief.co_belief_map" in draw_source
+    assert "finite.max" not in draw_source
     assert "GroundTruth" not in mapper_source
     assert "fds_result" not in mapper_source
 
@@ -88,9 +90,11 @@ def test_slam_and_costmap_surfaces_are_cached_by_revision(monkeypatch):
     shape = (grid.height, grid.width)
     belief = SimpleNamespace(
         revision=0,
-        final_cost_map=np.ones(shape),
         observed_mask=np.zeros(shape, dtype=bool),
-        blocked_mask=np.zeros(shape, dtype=bool),
+        temperature_observed_mask=np.zeros(shape, dtype=bool),
+        co_observed_mask=np.zeros(shape, dtype=bool),
+        temperature_belief_map=np.full(shape, np.nan),
+        co_belief_map=np.full(shape, np.nan),
         static_obstacle_map=np.zeros(shape, dtype=bool),
         dynamic_obstacle_map=np.zeros(shape, dtype=bool),
     )

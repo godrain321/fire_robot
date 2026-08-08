@@ -162,9 +162,10 @@ perception_map_display:
   danger_color: [210, 50, 50]
   blocked_color: [25, 25, 25]
   dynamic_obstacle_color: [120, 40, 150]
-  safe_cost_max: 0.25
-  caution_cost_max: 0.60
-  danger_cost_max: 0.99
+  temperature_caution_c: 40.0
+  temperature_danger_c: 60.0
+  co_caution_ppm: 100.0
+  co_danger_ppm: 1600.0
 
 map_overlays:
   show_dynamic_obstacles: true
