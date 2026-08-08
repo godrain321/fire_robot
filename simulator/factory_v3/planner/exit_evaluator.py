@@ -27,6 +27,7 @@ class ExitRejectionReason(Enum):
     DYNAMIC_OBSTACLE = "dynamic_obstacle"
     TEMPERATURE_LIMIT_EXCEEDED = "temperature_limit_exceeded"
     CO_LIMIT_EXCEEDED = "co_limit_exceeded"
+    PATH_RISK_COST_EXCEEDED = "path_risk_cost_exceeded"
     INVALID_COST = "invalid_cost"
     OUT_OF_MAP = "out_of_map"
 
@@ -40,6 +41,9 @@ class ExitEvaluationConfig:
     reject_path_over_threshold: bool = True
     reject_invalid_cost: bool = True
     usable_confirmation_max_unknown_ratio: float = 0.5
+    dangerous_accumulated_risk_cost: float | None = None
+    dangerous_average_risk_cost: float | None = None
+    dangerous_max_cell_risk_cost: float | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -62,6 +66,21 @@ class ExitEvaluationConfig:
             raise ValueError(
                 "usable_confirmation_max_unknown_ratio must be in [0,1]"
             )
+        for name in (
+            "dangerous_accumulated_risk_cost",
+            "dangerous_average_risk_cost",
+            "dangerous_max_cell_risk_cost",
+        ):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value <= 0.0
+            ):
+                raise ValueError(f"{name} must be a finite positive number or null")
 
     @classmethod
     def from_mapping(cls, values: dict[str, Any] | None) -> "ExitEvaluationConfig":
@@ -201,6 +220,14 @@ class ExitEvaluator:
         path_world = tuple(self.metadata.grid_to_world(*item) for item in path_grid)
         path_length = self._path_length(path_grid)
         risk_cost = self._risk_cost(path_grid, planning_costs)
+        average_risk_cost = (
+            risk_cost / path_length
+            if path_length > 1e-12 else
+            self._max_cell_risk_cost(path_grid, planning_costs)
+        )
+        max_cell_risk_cost = self._max_cell_risk_cost(
+            path_grid, planning_costs
+        )
         path_temp = self._finite_max(estimated_fire_map.temperature_c, path_grid)
         path_co = self._finite_max(estimated_fire_map.co_ppm, path_grid)
         observed = np.asarray([
@@ -213,6 +240,10 @@ class ExitEvaluator:
 
         if not math.isfinite(risk_cost) and self.config.reject_invalid_cost:
             reasons.append(ExitRejectionReason.INVALID_COST)
+        elif self._risk_threshold_exceeded(
+            risk_cost, average_risk_cost, max_cell_risk_cost
+        ):
+            reasons.append(ExitRejectionReason.PATH_RISK_COST_EXCEEDED)
         if self.config.reject_path_over_threshold:
             if (
                 (path_temp is not None and path_temp >= self.temperature_blocked_c)
@@ -313,6 +344,24 @@ class ExitEvaluator:
             second = max(0.0, float(costs[end[1], end[0]]) - self.base_cost)
             total += distance * 0.5 * (first + second)
         return float(total)
+
+    def _max_cell_risk_cost(self, path, costs):
+        values = [
+            max(0.0, float(costs[row, col]) - self.base_cost)
+            for col, row in path
+        ]
+        return float(max(values, default=0.0))
+
+    def _risk_threshold_exceeded(self, accumulated, average, maximum):
+        thresholds = (
+            (accumulated, self.config.dangerous_accumulated_risk_cost),
+            (average, self.config.dangerous_average_risk_cost),
+            (maximum, self.config.dangerous_max_cell_risk_cost),
+        )
+        return any(
+            limit is not None and value >= limit
+            for value, limit in thresholds
+        )
 
     @staticmethod
     def _finite_max(layer, path):

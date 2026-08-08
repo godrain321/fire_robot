@@ -1652,6 +1652,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             elif reasons & {
                 ExitRejectionReason.TEMPERATURE_LIMIT_EXCEEDED,
                 ExitRejectionReason.CO_LIMIT_EXCEEDED,
+                ExitRejectionReason.PATH_RISK_COST_EXCEEDED,
             }:
                 checked_status = ExitStatus.DANGEROUS
                 checked_reason = ",".join(sorted(item.value for item in reasons))
@@ -1723,6 +1724,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                 elif arrival_reasons & {
                     ExitRejectionReason.TEMPERATURE_LIMIT_EXCEEDED,
                     ExitRejectionReason.CO_LIMIT_EXCEEDED,
+                    ExitRejectionReason.PATH_RISK_COST_EXCEEDED,
                 }:
                     world.update_exit_status(
                         selected_exit, ExitStatus.DANGEROUS,

@@ -107,6 +107,12 @@ exit_evaluation:
   reject_invalid_cost: true
   # Observation coverage confirms USABLE status but never rejects a route.
   usable_confirmation_max_unknown_ratio: 0.5
+  # Risk cost excludes the base movement cost. The average is per metre.
+  # Unknown-only paths remain below these limits, while concentrated sensor
+  # risk can classify an exit as dangerous before a hard 60 C/1600 ppm block.
+  dangerous_accumulated_risk_cost: 150.0
+  dangerous_average_risk_cost: 10.0
+  dangerous_max_cell_risk_cost: 20.0
 
 exit_selection:
   prefer_confirmed_usable_exit: true
