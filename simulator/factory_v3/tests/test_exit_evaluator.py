@@ -61,6 +61,7 @@ def test_single_safe_exit_metrics_and_json():
 @pytest.mark.parametrize("status,reason", [
     (ExitStatus.BLOCKED, ExitRejectionReason.EXIT_BLOCKED),
     (ExitStatus.DANGEROUS, ExitRejectionReason.EXIT_DANGEROUS),
+    (ExitStatus.DANGER_EXPECTED, ExitRejectionReason.EXIT_DANGER_EXPECTED),
 ])
 def test_exit_status_rejected_before_path(status, reason):
     result, *_ = evaluate(Exit("E", (4, 0), (4, 0), status))

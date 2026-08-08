@@ -143,6 +143,7 @@ def test_temperature_between_release_and_block_keeps_latch():
     [
         (ExitStatus.BLOCKED, ReplanReason.EXIT_BLOCKED),
         (ExitStatus.DANGEROUS, ReplanReason.EXIT_UNSAFE_FIRE),
+        (ExitStatus.DANGER_EXPECTED, ReplanReason.EXIT_DANGER_EXPECTED),
     ],
 )
 def test_invalid_current_exit_is_rejected(status, reason):
@@ -176,6 +177,19 @@ def test_blocked_alternative_is_never_selected():
         item, current_exit_id="A", current_exit_cost=100,
         alternative_exit_costs={"B": 1},
         exit_statuses={"A": ExitStatus.USABLE, "B": ExitStatus.BLOCKED},
+    )
+    assert not result.required
+
+
+def test_expected_danger_alternative_is_never_selected():
+    item = policy(periodic_enabled=False)
+    result = evaluate(
+        item, current_exit_id="A", current_exit_cost=100,
+        alternative_exit_costs={"B": 1},
+        exit_statuses={
+            "A": ExitStatus.USABLE,
+            "B": ExitStatus.DANGER_EXPECTED,
+        },
     )
     assert not result.required
 

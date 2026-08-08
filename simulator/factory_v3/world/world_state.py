@@ -284,7 +284,10 @@ class WorldState:
     ) -> ExitCheckRecord:
         self.update_exit_status(
             exit_id, status, sim_time=sim_time,
-            reason=reason if status in (ExitStatus.BLOCKED, ExitStatus.DANGEROUS)
+            reason=reason if status in (
+                ExitStatus.BLOCKED, ExitStatus.DANGEROUS,
+                ExitStatus.DANGER_EXPECTED,
+            )
             else None,
         )
         self.exit_visit_status[exit_id] = ExitVisitStatus.CHECKED

@@ -25,6 +25,7 @@ class ExitStatus(Enum):
     USABLE = "usable"
     BLOCKED = "blocked"
     DANGEROUS = "dangerous"
+    DANGER_EXPECTED = "danger_expected"
 
 
 class ExitVisitStatus(Enum):
@@ -96,13 +97,20 @@ class Exit:
             raise TypeError("status must be ExitStatus")
         if status is ExitStatus.BLOCKED and not reason:
             raise ValueError("BLOCKED exit requires a reason")
-        if status is ExitStatus.DANGEROUS and not reason:
-            raise ValueError("DANGEROUS exit requires a reason")
+        if (
+            status in (ExitStatus.DANGEROUS, ExitStatus.DANGER_EXPECTED)
+            and not reason
+        ):
+            raise ValueError(f"{status.name} exit requires a reason")
         previous = self.status
         self.status = status
         self.last_checked_at = None if sim_time is None else float(sim_time)
         self.blocked_reason = reason if status is ExitStatus.BLOCKED else None
-        self.danger_reason = reason if status is ExitStatus.DANGEROUS else None
+        self.danger_reason = (
+            reason if status in (
+                ExitStatus.DANGEROUS, ExitStatus.DANGER_EXPECTED,
+            ) else None
+        )
         for name in ("temperature_c", "co_ppm", "path_cost"):
             if name in measurements:
                 setattr(self, name, float(measurements[name]))

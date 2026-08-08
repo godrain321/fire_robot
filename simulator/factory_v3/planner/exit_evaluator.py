@@ -20,6 +20,7 @@ from world.entities import ExitStatus
 class ExitRejectionReason(Enum):
     EXIT_BLOCKED = "exit_blocked"
     EXIT_DANGEROUS = "exit_dangerous"
+    EXIT_DANGER_EXPECTED = "exit_danger_expected"
     INVALID_EXIT_POSITION = "invalid_exit_position"
     NO_APPROACH_CELL = "no_approach_cell"
     NO_PATH = "no_path"
@@ -160,6 +161,11 @@ class ExitEvaluator:
             reasons.append(ExitRejectionReason.EXIT_BLOCKED)
         if exit_item.status is ExitStatus.DANGEROUS and self.config.reject_dangerous_exit:
             reasons.append(ExitRejectionReason.EXIT_DANGEROUS)
+        if (
+            exit_item.status is ExitStatus.DANGER_EXPECTED
+            and self.config.reject_dangerous_exit
+        ):
+            reasons.append(ExitRejectionReason.EXIT_DANGER_EXPECTED)
         try:
             self.metadata.world_to_grid(*exit_item.position_world)
         except ValueError:

@@ -847,6 +847,13 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                             < trend.current_average_cost - 1e-12
                         )
                         if improves and activate_replacement_route(replacement):
+                            if previous_exit is not None:
+                                world.update_exit_status(
+                                    previous_exit,
+                                    ExitStatus.DANGER_EXPECTED,
+                                    sim_time=sim_elapsed,
+                                    reason=reason,
+                                )
                             world.record_exit_switch(
                                 previous_exit_id=previous_exit,
                                 new_exit_id=replacement.target_exit_id,
@@ -987,7 +994,10 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     world.active_route_decision.target_exit_id is not None
                     and world.get_exit(
                         world.active_route_decision.target_exit_id
-                    ).status in (ExitStatus.BLOCKED, ExitStatus.DANGEROUS)
+                    ).status in (
+                        ExitStatus.BLOCKED, ExitStatus.DANGEROUS,
+                        ExitStatus.DANGER_EXPECTED,
+                    )
                 )
                 valid = route_validation.safe and not target_blocked
                 blocked_grid = route_validation.first_rejected_cell
@@ -1086,7 +1096,10 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                         world.active_exploration_plan is not None
                         and world.get_exit(
                             world.active_exploration_plan.target_exit_id
-                        ).status is ExitStatus.BLOCKED
+                        ).status in (
+                            ExitStatus.BLOCKED, ExitStatus.DANGEROUS,
+                            ExitStatus.DANGER_EXPECTED,
+                        )
                     )
                     if not search_validation.safe or exploration_target_blocked:
                         was_exploring = world.active_exploration_plan is not None
@@ -1430,6 +1443,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                         selected_exit is None
                         or world.get_exit(selected_exit).status not in (
                             ExitStatus.BLOCKED, ExitStatus.DANGEROUS,
+                            ExitStatus.DANGER_EXPECTED,
                         )
                     ):
                         event_replanning.mark_reevaluation_complete(

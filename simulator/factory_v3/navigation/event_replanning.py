@@ -34,6 +34,7 @@ class ReplanReason(Enum):
     PATH_CO_BLOCKED = "path_co_blocked"
     EXIT_BLOCKED = "exit_blocked"
     EXIT_UNSAFE_FIRE = "exit_unsafe_fire"
+    EXIT_DANGER_EXPECTED = "exit_danger_expected"
     VICTIM_FOLLOW_FAILURE = "victim_follow_failure"
     SAFER_EXIT_AVAILABLE = "safer_exit_available"
     PERIODIC_REEVALUATION = "periodic_reevaluation"
@@ -267,6 +268,12 @@ class EventReplanningPolicy:
                 ReplanReason.EXIT_UNSAFE_FIRE, ReplanPriority.EXIT_INVALID,
                 detail=f"exit={current_exit_id}",
             ))
+        elif status is ExitStatus.DANGER_EXPECTED:
+            candidates.append(self._decision(
+                ReplanReason.EXIT_DANGER_EXPECTED,
+                ReplanPriority.EXIT_INVALID,
+                detail=f"exit={current_exit_id}",
+            ))
         if victim_follow_active and (
             victim_path_blocked or victim_progress_stalled
             or victim_follow_distance_m is not None
@@ -396,6 +403,7 @@ class EventReplanningPolicy:
         for exit_id, cost in (alternatives or {}).items():
             if exit_id == current_id or statuses.get(exit_id) in (
                 ExitStatus.BLOCKED, ExitStatus.DANGEROUS,
+                ExitStatus.DANGER_EXPECTED,
             ):
                 continue
             if math.isfinite(float(cost)) and float(cost) >= 0:
