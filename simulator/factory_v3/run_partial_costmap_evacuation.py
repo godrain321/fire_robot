@@ -87,6 +87,7 @@ class SimulationMetrics:
     ground_truth_co: list[float] = field(default_factory=list)
     detected_victim: str | None = None
     selected_exit: str | None = None
+    actual_path_world: list[tuple[float, float]] = field(default_factory=list)
 
 
 def _finite_stats(values: list[float]) -> tuple[str, str]:
@@ -386,7 +387,8 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     returning_to_entrance = False
     blocked_return_grid = None
     detected_ids: set[str] = set()
-    trajectory = [(state.x, state.y)]
+    trajectory = metrics.actual_path_world
+    trajectory.append((state.x, state.y))
     latest_thermal = np.full((24, 32), 25.0)
     latest_co_text = "unknown"
     sim_elapsed = 0.0
@@ -1520,8 +1522,8 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                 state, config.simulation_dt, belief.final_cost_map
             )
         metrics.travelled_distance += moved
-        trajectory.append((state.x, state.y))
         if moved > 0.0:
+            trajectory.append((state.x, state.y))
             world.record_robot_position(
                 (state.x, state.y), sim_time=sim_elapsed,
                 is_returning=(returning_by_history or returning_to_entrance),
@@ -1918,6 +1920,64 @@ def print_summary(success, metrics, belief, elapsed):
     print(f"A* average time: {average:.6f} s")
 
 
+def export_actual_path(metrics, yaml_path, image_path, *, elapsed):
+    """Export only poses reached through physical translation, in world (x,y)."""
+    points = tuple(metrics.actual_path_world)
+    if not points:
+        raise ValueError("actual robot path is empty")
+    yaml_path = Path(yaml_path)
+    image_path = Path(image_path)
+    yaml_path.parent.mkdir(parents=True, exist_ok=True)
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "coordinate_frame": "factory_v3_world_xy_m",
+        "point_order": "x_y",
+        "simulation_time_s": round(float(elapsed), 6),
+        "travelled_distance_m": round(float(metrics.travelled_distance), 6),
+        "points": [
+            {"x": round(float(x), 6), "y": round(float(y), 6)}
+            for x, y in points
+        ],
+    }
+    yaml_path.write_text(
+        yaml.safe_dump(payload, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+
+    import pygame
+
+    width, height, margin = 1000, 760, 55
+    surface = pygame.Surface((width, height))
+    surface.fill((250, 250, 250))
+    xs = [item[0] for item in points]
+    ys = [item[1] for item in points]
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+    span_x = max(max_x - min_x, 1.0)
+    span_y = max(max_y - min_y, 1.0)
+    scale = min(
+        (width - 2 * margin) / span_x,
+        (height - 2 * margin) / span_y,
+    )
+
+    def screen_point(point):
+        return (
+            int(margin + (point[0] - min_x) * scale),
+            int(height - margin - (point[1] - min_y) * scale),
+        )
+
+    pygame.draw.rect(
+        surface, (190, 190, 190),
+        (margin, margin, width - 2 * margin, height - 2 * margin), 2,
+    )
+    rendered = [screen_point(item) for item in points]
+    if len(rendered) >= 2:
+        pygame.draw.lines(surface, (35, 105, 210), False, rendered, 4)
+    pygame.draw.circle(surface, (35, 175, 75), rendered[0], 9)
+    pygame.draw.circle(surface, (220, 55, 55), rendered[-1], 9)
+    pygame.image.save(surface, str(image_path))
+
+
 def parse_args():
     base = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(description=__doc__)
@@ -1962,6 +2022,14 @@ def parse_args():
     parser.add_argument(
         "--debug-costmap-plots", action="store_true",
         help="show static Matplotlib cost-layer plots after the run",
+    )
+    parser.add_argument(
+        "--actual-path-yaml", type=Path, default=None,
+        help="write the physically traversed world-coordinate path as YAML",
+    )
+    parser.add_argument(
+        "--actual-path-image", type=Path, default=None,
+        help="write a simple PNG visualization of the physically traversed path",
     )
     return parser.parse_args()
 
@@ -2069,6 +2137,15 @@ def main() -> int:
     args = apply_scenario_config(parse_args())
     success, metrics, belief, elapsed = run_simulation(args)
     print_summary(success, metrics, belief, elapsed)
+    if (args.actual_path_yaml is None) != (args.actual_path_image is None):
+        raise ValueError(
+            "--actual-path-yaml and --actual-path-image must be provided together"
+        )
+    if args.actual_path_yaml is not None:
+        export_actual_path(
+            metrics, args.actual_path_yaml, args.actual_path_image,
+            elapsed=elapsed,
+        )
     if args.debug_costmap_plots:
         show_debug_costmaps(belief)
     return 0 if success else 2
