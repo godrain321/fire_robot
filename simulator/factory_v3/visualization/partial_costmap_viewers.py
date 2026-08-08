@@ -244,6 +244,11 @@ class PygameSimulationViewer:
             raise TypeError("exit display status must be ExitStatus")
         return status.value
 
+    @classmethod
+    def exit_status_display_label(cls, exit_id, status):
+        """Format the sole text label shown for an exit."""
+        return f"{exit_id} status: {cls.exit_status_label(status).upper()}"
+
     @staticmethod
     def perception_blocked_overlay(blocked, planner_static):
         """Keep inflated planner-static cells out of the SLAM wall display."""
@@ -453,30 +458,17 @@ class PygameSimulationViewer:
                 self._cached_text(label, self.small_font, color),
                 (point[0] + 11, point[1] - 7),
             )
-        evaluations = {item.exit_id: item for item in exit_evaluations}
         for exit_item in exits:
             approach = exit_item["approach"]
             point = self.transform.world_to_screen(approach["x"], approach["y"])
-            evaluation = evaluations.get(exit_item["id"])
             if exit_item["id"] == selected_exit_id:
                 color = (40, 245, 100)
-            elif evaluation is not None and not evaluation.accepted:
-                color = (235, 70, 70)
-            elif evaluation is not None:
-                color = (80, 210, 255)
             else:
                 color = (210, 180, 75)
             pygame.draw.polygon(
                 self.screen, color,
                 [(point[0], point[1] - 9), (point[0] - 8, point[1] + 7),
                  (point[0] + 8, point[1] + 7)],
-            )
-            label = exit_item["id"]
-            if evaluation is not None and evaluation.rejection_reasons:
-                label += f": {evaluation.rejection_reasons[0].value}"
-            self.screen.blit(
-                self._cached_text(label, self.small_font, color),
-                (point[0] + 10, point[1] - 8),
             )
 
     def _draw_mini_layer(
@@ -672,22 +664,19 @@ class PygameSimulationViewer:
             exit_evaluations, selected_exit_id,
         )
         if self.overlay_config.show_exit_states and exit_states:
-            colors = {
-                ExitStatus.UNKNOWN: (150, 150, 150),
-                ExitStatus.USABLE: (40, 220, 230),
-                ExitStatus.BLOCKED: (10, 10, 10),
-                ExitStatus.DANGEROUS: (240, 45, 45),
-            }
+            status_text_color = (240, 45, 45)
             for exit_item in exits:
                 state_value = exit_states.get(exit_item["id"], ExitStatus.UNKNOWN)
                 approach = exit_item["approach"]
                 point = self.transform.world_to_screen(approach["x"], approach["y"])
-                label = self.exit_status_label(state_value)
+                label = self.exit_status_display_label(
+                    exit_item["id"], state_value
+                )
                 self.screen.blit(
                     self._cached_text(
-                        label, self.small_font, colors[state_value]
+                        label, self.small_font, status_text_color
                     ),
-                    (point[0] + 10, point[1] + 9),
+                    (point[0] + 10, point[1] - 8),
                 )
         self.pygame.draw.rect(self.screen, (210, 210, 210), self.map_rect, 2)
         self._draw_mini_layer(

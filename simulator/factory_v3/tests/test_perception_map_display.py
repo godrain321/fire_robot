@@ -95,3 +95,10 @@ def test_planner_static_inflation_is_not_drawn_as_slam_wall():
 @pytest.mark.parametrize("status", tuple(ExitStatus))
 def test_exit_status_overlay_uses_enum_value_text(status):
     assert PygameSimulationViewer.exit_status_label(status) == status.value
+
+
+def test_exit_status_display_does_not_depend_on_evaluation_reason():
+    """The main exit label is derived only from the WorldState status."""
+    assert PygameSimulationViewer.exit_status_display_label(
+        "EXIT1", ExitStatus.BLOCKED
+    ) == "EXIT1 status: BLOCKED"
