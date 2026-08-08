@@ -64,6 +64,24 @@ def test_exit2_fire_line_replaces_strong_remote_oil_source():
     assert "SPREAD_RATE=0.0300" in fire_line
 
 
+def test_sensor_costmap_makes_observed_developing_fire_costly():
+    scenario = yaml.safe_load(
+        (BASE / "config" / "evacuation.yaml").read_text(encoding="utf-8")
+    )
+    config = scenario["sensor_costmap"]
+    assert config["temperature_weight"] == 24.0
+    assert config["temperature_power"] == 1.5
+
+    # An observed 40 C cell is cautionary well before the unchanged 60 C
+    # hard block. Unknown cells are not involved in this calculation.
+    normalized = (40.0 - 20.0) / (60.0 - 20.0)
+    observed_temperature_cost = (
+        config["temperature_weight"]
+        * normalized ** config["temperature_power"]
+    )
+    assert observed_temperature_cost > 8.0
+
+
 def test_exit1_scenario_blocker_is_loaded_without_changing_base_includes():
     _, obstacles, _ = load_factory_geometry(BASE / "factory_v3.fds")
     blocker_xb = [7.8, 10.8, 17.8, 18.0, 0.0, 1.4]

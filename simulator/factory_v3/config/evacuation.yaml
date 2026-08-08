@@ -196,6 +196,15 @@ hazard_knowledge:
   temperature_elevated_c: 35.0
   co_elevated_ppm: 100.0
 
+# Sensor observations remain the only source of fire risk.  The stronger,
+# slightly less convex temperature curve makes the developing EXIT2 fire
+# visible in planning costs before it reaches the hard 60 C movement block.
+sensor_costmap:
+  temperature_weight: 24.0
+  temperature_power: 1.5
+  co_weight: 8.0
+  co_power: 2.0
+
 # Sensor-only fire-source inference.  This never reads the FDS source position
 # or full Ground Truth arrays. Direct 60 C / 1600 ppm movement blocks remain in
 # PartialCostmapConfig and are not duplicated here.

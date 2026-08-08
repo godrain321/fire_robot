@@ -176,7 +176,9 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     config = PartialCostmapConfig(
         grid_resolution=args.grid_resolution,
         temperature_weight=args.temperature_weight,
+        temperature_power=args.temperature_power,
         co_weight=args.co_weight,
+        co_power=args.co_power,
         unknown_penalty=args.unknown_penalty,
         replan_interval_seconds=args.replan_interval,
         sensor_update_interval_seconds=args.sensor_interval,
@@ -1936,8 +1938,10 @@ def parse_args():
     parser.add_argument("--robot-angular-speed-deg", type=float, default=None)
     parser.add_argument("--render-fps", type=int, default=None)
     parser.add_argument("--unknown-penalty", type=float, default=2.0)
-    parser.add_argument("--temperature-weight", type=float, default=8.0)
-    parser.add_argument("--co-weight", type=float, default=8.0)
+    parser.add_argument("--temperature-weight", type=float, default=None)
+    parser.add_argument("--temperature-power", type=float, default=None)
+    parser.add_argument("--co-weight", type=float, default=None)
+    parser.add_argument("--co-power", type=float, default=None)
     parser.add_argument("--gas-update-radius", type=float, default=0.0)
     parser.add_argument("--inflation-radius", type=float, default=None)
     parser.add_argument("--no-inflation", action="store_true")
@@ -1990,6 +1994,21 @@ def apply_scenario_config(args):
     display_config = scenario.get("display", {})
     if args.render_fps is None:
         args.render_fps = int(display_config.get("render_fps", 30))
+    sensor_costmap = scenario.get("sensor_costmap", {})
+    if not isinstance(sensor_costmap, dict):
+        raise ValueError("sensor_costmap must be a mapping")
+    cost_defaults = {
+        "temperature_weight": 8.0,
+        "temperature_power": 2.0,
+        "co_weight": 8.0,
+        "co_power": 2.0,
+    }
+    for name, default in cost_defaults.items():
+        if getattr(args, name) is None:
+            setattr(args, name, float(sensor_costmap.get(name, default)))
+        value = getattr(args, name)
+        if not math.isfinite(value) or value < 0.0:
+            raise ValueError(f"{name} must be finite and non-negative")
     if args.robot_angular_speed_deg <= 0.0:
         raise ValueError("robot angular speed must be positive")
     if args.render_fps < 1:
