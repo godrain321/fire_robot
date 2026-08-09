@@ -48,7 +48,7 @@ from navigation.exploration_manager import (
 from navigation.initial_advance import InitialAdvanceConfig
 from navigation.external_waypoint_motion import (
     ExternalWaypointFollower, ExternalWaypointMotionConfig,
-    load_external_waypoints,
+    adjust_first_waypoint_departure, load_external_waypoints,
 )
 from navigation.victim_following import (
     FollowState, VictimFollowingConfig, VictimFollowingController,
@@ -384,6 +384,9 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         )
         external_world_path = load_external_waypoints(
             external_waypoint_file, external_motion_config
+        )
+        external_world_path = adjust_first_waypoint_departure(
+            external_world_path, (state.x, state.y), external_motion_config
         )
         for index, point in enumerate(external_world_path):
             node = grid_map.world_to_grid(*point)

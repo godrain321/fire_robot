@@ -43,6 +43,10 @@ external_waypoint_motion:
   simulation_to_map_translation_x_m: 13.00189199
   simulation_to_map_translation_y_m: -29.41813371
   simulation_to_map_rotation_deg: 60.29982582450894
+  # Keep the first departure vertical in factory world coordinates, and move
+  # that first target 0.4 m toward +y. Later YAML waypoints stay unchanged.
+  align_first_waypoint_x_to_robot_start: true
+  first_waypoint_y_offset_m: 0.4
 
 display:
   render_fps: 30
