@@ -31,7 +31,7 @@ robot_motion:
   angular_speed_deg_s: 120.0
   # Before the first exit A* request, move physically along the configured
   # initial yaw. This is applied once and never repeated after replanning.
-  initial_forward_distance_m: 0.4
+  initial_forward_distance_m: 0.8
 
 display:
   render_fps: 30
