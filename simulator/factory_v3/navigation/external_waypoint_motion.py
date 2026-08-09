@@ -19,8 +19,6 @@ class ExternalWaypointMotionConfig:
     simulation_to_map_translation_x_m: float = 13.00189199
     simulation_to_map_translation_y_m: float = -29.41813371
     simulation_to_map_rotation_deg: float = 60.29982582450894
-    align_first_waypoint_x_to_robot_start: bool = False
-    first_waypoint_y_offset_m: float = 0.0
 
     def __post_init__(self) -> None:
         if not isinstance(self.enabled, bool):
@@ -33,13 +31,10 @@ class ExternalWaypointMotionConfig:
             raise ValueError(
                 "external waypoint target_frame must be factory_v3_world_xy_m"
             )
-        if not isinstance(self.align_first_waypoint_x_to_robot_start, bool):
-            raise TypeError("align_first_waypoint_x_to_robot_start must be bool")
         values = (
             self.simulation_to_map_translation_x_m,
             self.simulation_to_map_translation_y_m,
             self.simulation_to_map_rotation_deg,
-            self.first_waypoint_y_offset_m,
         )
         if any(isinstance(value, bool) or not math.isfinite(float(value))
                for value in values):
@@ -123,22 +118,6 @@ def load_external_waypoints(
             raise ValueError(f"external waypoint {index} quaternion is not normalized")
         output.append(_map_to_simulation(x_map, y_map, config))
     return tuple(output)
-
-
-def adjust_first_waypoint_departure(
-    points_world, robot_start_world, config: ExternalWaypointMotionConfig,
-) -> tuple[tuple[float, float], ...]:
-    """Apply the configured first-leg geometry without altering later points."""
-    points = tuple((float(x), float(y)) for x, y in points_world)
-    if not points:
-        raise ValueError("external motion path cannot be empty")
-    start_x = _finite(robot_start_world[0], "robot start x")
-    _finite(robot_start_world[1], "robot start y")
-    first_x, first_y = points[0]
-    if config.align_first_waypoint_x_to_robot_start:
-        first_x = start_x
-    first_y += float(config.first_waypoint_y_offset_m)
-    return ((first_x, first_y),) + points[1:]
 
 
 class ExternalWaypointFollower:

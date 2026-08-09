@@ -5,7 +5,7 @@ import yaml
 
 from navigation.external_waypoint_motion import (
     ExternalWaypointFollower, ExternalWaypointMotionConfig,
-    adjust_first_waypoint_departure, load_external_waypoints,
+    load_external_waypoints,
 )
 from robot.path_follower import RobotState
 
@@ -75,16 +75,3 @@ def test_motion_follower_moves_through_queue_independently_of_costmap():
     assert follower.waypoint_index == 2
     assert (state.x, state.y) == pytest.approx((0.4, 0.4))
     assert travelled == pytest.approx(0.8)
-
-
-def test_first_departure_is_y_parallel_and_offset_by_40_cm():
-    config = ExternalWaypointMotionConfig(
-        align_first_waypoint_x_to_robot_start=True,
-        first_waypoint_y_offset_m=0.4,
-    )
-    original = ((14.257, 15.269), (11.264, 14.930))
-    adjusted = adjust_first_waypoint_departure(original, (13.0, 16.0), config)
-
-    assert adjusted[0] == pytest.approx((13.0, 15.669))
-    assert adjusted[1] == original[1]
-    assert original[0] == (14.257, 15.269)
