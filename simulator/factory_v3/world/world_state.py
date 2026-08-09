@@ -463,6 +463,30 @@ class WorldState:
         self.exit_switch_cooldown_until = float(sim_time) + float(cooldown_seconds)
         self.last_exit_switch_validation = str(validation_result)
 
+    def record_cost_driven_exit_switch(
+        self, *, previous_exit_id: str, new_exit_id: str, reason: str,
+        sim_time: float, cooldown_seconds: float, validation_result: str,
+    ) -> None:
+        """Atomically retain the rejected exit's cost-trend safety state."""
+        previous_exit_id = str(previous_exit_id)
+        new_exit_id = str(new_exit_id)
+        if previous_exit_id == new_exit_id:
+            raise ValueError("cost-driven exit switch requires a different exit")
+        self.get_exit(previous_exit_id)
+        self.get_exit(new_exit_id)
+        self.update_exit_status(
+            previous_exit_id, ExitStatus.DANGER_EXPECTED,
+            sim_time=sim_time, reason=reason,
+        )
+        self.record_exit_switch(
+            previous_exit_id=previous_exit_id,
+            new_exit_id=new_exit_id,
+            reason=reason,
+            sim_time=sim_time,
+            cooldown_seconds=cooldown_seconds,
+            validation_result=validation_result,
+        )
+
     def exit_switch_is_cooling_down(self, sim_time: float) -> bool:
         return (
             self.exit_switch_cooldown_until is not None

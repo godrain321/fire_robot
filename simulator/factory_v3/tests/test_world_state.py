@@ -94,6 +94,28 @@ def test_world_state_and_mission_manager_minimal_link():
     assert manager.selected_victim_id == victim.victim_id
 
 
+def test_cost_driven_switch_marks_previous_exit_danger_expected():
+    world = make_world()
+    world.add_exit(Exit("EXIT2", (0, 1), (1, 1)))
+    world.add_exit(Exit("EXIT3", (4, 1), (3, 2)))
+
+    world.record_cost_driven_exit_switch(
+        previous_exit_id="EXIT2",
+        new_exit_id="EXIT3",
+        reason="sustained_route_cost_increase:1.000->1.500;consecutive=3",
+        sim_time=12.0,
+        cooldown_seconds=10.0,
+        validation_result="validated",
+    )
+
+    assert world.get_exit("EXIT2").status is ExitStatus.DANGER_EXPECTED
+    assert world.get_exit("EXIT2").danger_reason.startswith(
+        "sustained_route_cost_increase"
+    )
+    assert world.previous_target_exit_id == "EXIT2"
+    assert world.current_target_exit_id == "EXIT3"
+
+
 def test_factory_v3_config_loads_and_bad_enum_is_rejected():
     scenario = yaml.safe_load((BASE / "config/evacuation.yaml").read_text())
     mesh, obstacles, holes = load_factory_geometry(BASE / "factory_v3.fds")

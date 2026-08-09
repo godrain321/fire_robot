@@ -829,7 +829,12 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     and not world.exit_switch_is_cooling_down(sim_elapsed)
                 ):
                     reason = trend.reason
-                    previous_exit = active_decision.target_exit_id
+                    # ``selected_exit`` is the route the controller was
+                    # actually following. The decision object is only a
+                    # fallback for older/restored route state.
+                    previous_exit = (
+                        selected_exit or active_decision.target_exit_id
+                    )
                     next_waypoint = (
                         follower.world_path[follower.waypoint_index]
                         if follower.waypoint_index < len(follower.world_path)
@@ -892,14 +897,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                             < trend.current_average_cost - 1e-12
                         )
                         if improves and activate_replacement_route(replacement):
-                            if previous_exit is not None:
-                                world.update_exit_status(
-                                    previous_exit,
-                                    ExitStatus.DANGER_EXPECTED,
-                                    sim_time=sim_elapsed,
-                                    reason=reason,
-                                )
-                            world.record_exit_switch(
+                            world.record_cost_driven_exit_switch(
                                 previous_exit_id=previous_exit,
                                 new_exit_id=replacement.target_exit_id,
                                 reason=reason, sim_time=sim_elapsed,
