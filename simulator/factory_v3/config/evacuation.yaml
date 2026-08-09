@@ -5,7 +5,9 @@ co_npz: processed/fds_co_2d_timeseries.npz
 
 planner:
   grid_resolution_m: 0.20
-  inflation_radius_m: 0.40
+  # Keep planned cell centres at least 0.50 m from known occupied geometry so
+  # the robot does not skim wall corners during shortcut turns.
+  inflation_radius_m: 0.50
 
 # These objects exist in FDS/Smokeview but are deliberately absent from the
 # robot's initial Pygame/planner map. A future obstacle detector may add them
@@ -132,7 +134,7 @@ dynamic_obstacle_mapping:
   duplicate_merge_distance_m: 0.3
   obstacle_diameter_m: 0.2
   # Matches the existing planner robot/inflation radius.
-  obstacle_inflation_radius_m: 0.40
+  obstacle_inflation_radius_m: 0.50
   stale_obstacle_timeout_s: 10.0
   minimum_confidence: 0.6
   # These are intentional EXIT_SOLID door meshes, not newly introduced
