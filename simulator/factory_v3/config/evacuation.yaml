@@ -33,17 +33,6 @@ robot_motion:
   # initial yaw. This is applied once and never repeated after replanning.
   initial_forward_distance_m: 0.4
 
-# Motion-only override. Costmap/A* paths continue to be generated, validated,
-# stored and drawn; only RobotState translation follows this ROS waypoint file.
-external_waypoint_motion:
-  enabled: true
-  waypoint_file: ../../../../fire_robot_rpi/maps/waypoint_queue_latest.yaml
-  source_frame: map
-  target_frame: factory_v3_world_xy_m
-  simulation_to_map_translation_x_m: 13.00189199
-  simulation_to_map_translation_y_m: -29.41813371
-  simulation_to_map_rotation_deg: 60.29982582450894
-
 display:
   render_fps: 30
 

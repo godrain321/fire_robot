@@ -46,10 +46,6 @@ from navigation.exploration_manager import (
     ExplorationConfig, ExplorationManager, ExplorationPhase,
 )
 from navigation.initial_advance import InitialAdvanceConfig
-from navigation.external_waypoint_motion import (
-    ExternalWaypointFollower, ExternalWaypointMotionConfig,
-    load_external_waypoints,
-)
 from navigation.victim_following import (
     FollowState, VictimFollowingConfig, VictimFollowingController,
     evacuation_success_ready,
@@ -374,31 +370,6 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     state = RobotState(args.start[0], args.start[1], math.radians(args.start_theta))
     goal = tuple(args.start)
     follower = ReplannablePathFollower(grid_map, config)
-    external_motion_config = ExternalWaypointMotionConfig.from_mapping(
-        args.external_waypoint_motion_config
-    )
-    external_motion_follower = None
-    if external_motion_config.enabled:
-        external_waypoint_file = external_motion_config.resolve_waypoint_file(
-            args.scenario_config.resolve().parent
-        )
-        external_world_path = load_external_waypoints(
-            external_waypoint_file, external_motion_config
-        )
-        for index, point in enumerate(external_world_path):
-            node = grid_map.world_to_grid(*point)
-            if not grid_map.in_bounds(node):
-                raise ValueError(
-                    f"external waypoint {index} is outside factory_v3: {point}"
-                )
-        external_motion_follower = ExternalWaypointFollower(
-            external_world_path,
-            speed_mps=config.robot_speed,
-            angular_speed_rad_s=config.robot_angular_speed,
-            tolerance_m=config.waypoint_tolerance,
-        )
-        # Costmap/A* remains active for evaluation and display, but it does not
-        # command this explicitly requested motion-only replay follower.
     thermal_camera = ThermalCameraMLX90640()
     # Stage 2 must be able to represent the specified 1600 ppm threshold.
     gas_sensor = MQ135Sensor(MQ135Config(
@@ -631,10 +602,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     initial_advance = InitialAdvanceConfig.from_robot_motion(
         args.scenario.get("robot_motion")
     )
-    initial_advance_pending = (
-        initial_advance.distance_m > 0.0
-        and external_motion_follower is None
-    )
+    initial_advance_pending = initial_advance.distance_m > 0.0
     initial_advance_goal = initial_advance.target_world(
         (state.x, state.y), state.theta
     )
@@ -1616,11 +1584,6 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         )
         if follow_paused:
             moved, motion_status = 0.0, "waiting for victim"
-        elif external_motion_follower is not None:
-            moved, motion_status = external_motion_follower.update(
-                state, config.simulation_dt
-            )
-            motion_status = "external waypoint: " + motion_status
         else:
             moved, motion_status = follower.update(
                 state, config.simulation_dt, belief.final_cost_map
@@ -2234,9 +2197,6 @@ def apply_scenario_config(args):
         "perception_map_display", {}
     )
     args.map_overlays_config = scenario.get("map_overlays", {})
-    args.external_waypoint_motion_config = scenario.get(
-        "external_waypoint_motion", {}
-    )
     return args
 
 
