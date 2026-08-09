@@ -668,7 +668,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         world.set_simulation_time(sim_elapsed)
         if (
             initial_advance_pending
-            and follower.goal_reached(state, initial_advance_goal)
+            and follower.waypoint_index >= len(follower.world_path)
         ):
             initial_advance_pending = False
             follower.clear()

@@ -77,7 +77,10 @@ class ReplannablePathFollower:
         if distance <= self.config.waypoint_tolerance:
             state.x, state.y = target_x, target_y
             self.waypoint_index += 1
-            return 0.0, "waypoint reached"
+            # The tolerance decides when to snap to the exact waypoint, but
+            # the remaining physical displacement still belongs to the actual
+            # trajectory and travelled-distance metrics.
+            return distance, "waypoint reached"
 
         target_theta = math.atan2(dy, dx)
         angle_error = _wrap_angle(target_theta - state.theta)
