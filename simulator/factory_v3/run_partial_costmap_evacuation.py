@@ -468,10 +468,11 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         )
         return result
 
-    def activate_replacement_route(replacement) -> bool:
+    def activate_replacement_route(replacement, *, switch_reason=None) -> bool:
         """Activate a Stage-6 replacement only after Stage-7 validation."""
         nonlocal goal, no_path_active, returning_to_entrance
         nonlocal selected_exit, status
+        previous_selected_exit = selected_exit
         goal = replacement.target_position_world
         simplified = activate_simplified_path(
             replacement.path_grid, goal_world=goal
@@ -519,6 +520,13 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             metrics.selected_exit = selected_exit
             returning_to_entrance = False
             status = f"EVACUATING VIA {selected_exit}"
+            if switch_reason is not None:
+                world.mark_replaced_unknown_exit_danger_expected(
+                    previous_exit_id=previous_selected_exit,
+                    new_exit_id=selected_exit,
+                    reason=str(switch_reason),
+                    sim_time=sim_elapsed,
+                )
         initial_cost = evaluate_path_cost(
             simplified.simplified_path_grid, belief.final_cost_map
         )
@@ -916,7 +924,9 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                             and replacement_cost[1]
                             < trend.current_average_cost - 1e-12
                         )
-                        if improves and activate_replacement_route(replacement):
+                        if improves and activate_replacement_route(
+                            replacement, switch_reason=reason
+                        ):
                             world.record_cost_driven_exit_switch(
                                 previous_exit_id=previous_exit,
                                 new_exit_id=replacement.target_exit_id,
@@ -1017,7 +1027,9 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                         )
                         world.hazard_knowledge_decision = replacement.hazard_knowledge
                         if replacement.success:
-                            activate_replacement_route(replacement)
+                            activate_replacement_route(
+                                replacement, switch_reason=invalid_reason
+                            )
                         else:
                             mission.handle_event(
                                 MissionEvent.NO_SAFE_ROUTE_FOUND,
@@ -1120,7 +1132,9 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                                 ),
                             )
                         if replacement.success:
-                            activate_replacement_route(replacement)
+                            activate_replacement_route(
+                                replacement, switch_reason=invalid_reason
+                            )
                         else:
                             mission.handle_event(
                                 MissionEvent.NO_SAFE_ROUTE_FOUND,

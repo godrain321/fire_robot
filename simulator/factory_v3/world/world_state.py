@@ -474,9 +474,11 @@ class WorldState:
             raise ValueError("cost-driven exit switch requires a different exit")
         self.get_exit(previous_exit_id)
         self.get_exit(new_exit_id)
-        self.update_exit_status(
-            previous_exit_id, ExitStatus.DANGER_EXPECTED,
-            sim_time=sim_time, reason=reason,
+        self.mark_replaced_unknown_exit_danger_expected(
+            previous_exit_id=previous_exit_id,
+            new_exit_id=new_exit_id,
+            reason=reason,
+            sim_time=sim_time,
         )
         self.record_exit_switch(
             previous_exit_id=previous_exit_id,
@@ -486,6 +488,27 @@ class WorldState:
             cooldown_seconds=cooldown_seconds,
             validation_result=validation_result,
         )
+
+    def mark_replaced_unknown_exit_danger_expected(
+        self, *, previous_exit_id: str | None, new_exit_id: str | None,
+        reason: str, sim_time: float,
+    ) -> bool:
+        """Retain why a validated replan abandoned an unchecked exit."""
+        if (
+            previous_exit_id is None
+            or new_exit_id is None
+            or previous_exit_id == new_exit_id
+        ):
+            return False
+        previous = self.get_exit(previous_exit_id)
+        self.get_exit(new_exit_id)
+        if previous.status is not ExitStatus.UNKNOWN:
+            return False
+        self.update_exit_status(
+            previous_exit_id, ExitStatus.DANGER_EXPECTED,
+            sim_time=sim_time, reason=reason,
+        )
+        return True
 
     def exit_switch_is_cooling_down(self, sim_time: float) -> bool:
         return (

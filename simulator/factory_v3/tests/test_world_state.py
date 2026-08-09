@@ -116,6 +116,23 @@ def test_cost_driven_switch_marks_previous_exit_danger_expected():
     assert world.current_target_exit_id == "EXIT3"
 
 
+def test_validated_replacement_does_not_leave_previous_exit_unknown():
+    world = make_world()
+    world.add_exit(Exit("EXIT2", (0, 1), (1, 1)))
+    world.add_exit(Exit("EXIT3", (4, 1), (3, 2)))
+
+    changed = world.mark_replaced_unknown_exit_danger_expected(
+        previous_exit_id="EXIT2",
+        new_exit_id="EXIT3",
+        reason="invalid_cost_on_remaining_path",
+        sim_time=8.0,
+    )
+
+    assert changed
+    assert world.get_exit("EXIT2").status is ExitStatus.DANGER_EXPECTED
+    assert world.get_exit("EXIT2").danger_reason == "invalid_cost_on_remaining_path"
+
+
 def test_factory_v3_config_loads_and_bad_enum_is_rejected():
     scenario = yaml.safe_load((BASE / "config/evacuation.yaml").read_text())
     mesh, obstacles, holes = load_factory_geometry(BASE / "factory_v3.fds")
