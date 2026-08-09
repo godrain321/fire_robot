@@ -38,10 +38,11 @@ class PartialCostmapConfig(FireCostmapConfig):
             "unobserved_co_penalty": self.unobserved_co_penalty,
             "replan_distance": self.replan_distance,
             "gas_update_radius": self.gas_update_radius,
+            "selected_fds_start_time": self.selected_fds_start_time,
         }
         for name, value in non_negative.items():
-            if value < 0.0:
-                raise ValueError(f"{name} must be non-negative")
+            if not math.isfinite(float(value)) or value < 0.0:
+                raise ValueError(f"{name} must be finite and non-negative")
         positive = {
             "replan_interval_seconds": self.replan_interval_seconds,
             "sensor_update_interval_seconds": self.sensor_update_interval_seconds,

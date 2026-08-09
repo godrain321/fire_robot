@@ -2,6 +2,8 @@ fds_file: factory_v3.fds
 fds_result_chid: factory_v3_cat
 temperature_npz: processed/fds_temperature_3d_timeseries.npz
 co_npz: processed/fds_co_2d_timeseries.npz
+# Simulation t=0 samples the saved FDS/NPZ fields at t=10 seconds.
+fds_start_time_s: 10.0
 
 planner:
   grid_resolution_m: 0.20

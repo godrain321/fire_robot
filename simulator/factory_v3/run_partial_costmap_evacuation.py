@@ -2096,7 +2096,7 @@ def parse_args():
     parser.add_argument("--start", type=float, nargs=2, default=None)
     parser.add_argument("--start-theta", type=float, default=None)
     parser.add_argument("--grid-resolution", type=float, default=None)
-    parser.add_argument("--fds-start-time", type=float, default=0.0)
+    parser.add_argument("--fds-start-time", type=float, default=None)
     parser.add_argument("--max-time", type=float, default=90.0)
     parser.add_argument("--dt", type=float, default=0.1)
     parser.add_argument("--sensor-interval", type=float, default=0.25)
@@ -2160,6 +2160,12 @@ def apply_scenario_config(args):
     args.grid_resolution = float(
         args.grid_resolution or scenario["planner"]["grid_resolution_m"]
     )
+    args.fds_start_time = float(
+        scenario.get("fds_start_time_s", 0.0)
+        if args.fds_start_time is None else args.fds_start_time
+    )
+    if not math.isfinite(args.fds_start_time) or args.fds_start_time < 0.0:
+        raise ValueError("fds_start_time_s must be finite and non-negative")
     args.inflation_radius = float(
         scenario["planner"]["inflation_radius_m"]
         if args.inflation_radius is None else args.inflation_radius
