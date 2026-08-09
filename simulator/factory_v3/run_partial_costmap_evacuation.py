@@ -36,7 +36,8 @@ from navigation.evacuation_strategy_selector import (
 from navigation.travel_history import TravelHistory, TravelHistoryConfig
 from navigation.path_simplifier import PathSimplificationConfig, SafePathSimplifier
 from navigation.exit_switching import (
-    ExitSwitchingConfig, RouteCostTrendMonitor, current_direction_world,
+    DelayedCostSwitch, ExitSwitchingConfig, RouteCostTrendMonitor,
+    current_direction_world,
     evaluate_path_cost,
 )
 from navigation.event_replanning import (
@@ -300,6 +301,9 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         args.exit_switching_config
     )
     route_cost_monitor = RouteCostTrendMonitor(exit_switching_config)
+    delayed_cost_switch = DelayedCostSwitch(
+        exit_switching_config.additional_travel_before_switch_m
+    )
     path_validation_config = PathValidationConfig.from_mapping(
         args.path_validation_config
     )
@@ -824,17 +828,33 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                         baseline=trend.baseline_average_cost,
                         consecutive=trend.consecutive_increases,
                     )
+                active_target_exit = (
+                    selected_exit or active_decision.target_exit_id
+                )
+                if (
+                    delayed_cost_switch.active
+                    and delayed_cost_switch.exit_id != active_target_exit
+                ):
+                    delayed_cost_switch.clear()
                 if (
                     trend.switch_required
+                    and not delayed_cost_switch.active
+                    and active_target_exit is not None
                     and not world.exit_switch_is_cooling_down(sim_elapsed)
                 ):
-                    reason = trend.reason
+                    delayed_cost_switch.arm(
+                        active_target_exit, trend.reason,
+                        metrics.travelled_distance,
+                    )
+                if (
+                    delayed_cost_switch.ready(metrics.travelled_distance)
+                    and not world.exit_switch_is_cooling_down(sim_elapsed)
+                ):
+                    reason = delayed_cost_switch.reason
                     # ``selected_exit`` is the route the controller was
                     # actually following. The decision object is only a
                     # fallback for older/restored route state.
-                    previous_exit = (
-                        selected_exit or active_decision.target_exit_id
-                    )
+                    previous_exit = delayed_cost_switch.exit_id
                     next_waypoint = (
                         follower.world_path[follower.waypoint_index]
                         if follower.waypoint_index < len(follower.world_path)
@@ -906,7 +926,9 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                                 ),
                                 validation_result="validated",
                             )
+                            delayed_cost_switch.clear()
                         else:
+                            delayed_cost_switch.clear()
                             mission.handle_event(
                                 MissionEvent.NO_SAFE_ROUTE_FOUND,
                                 sim_time=sim_elapsed,

@@ -267,6 +267,9 @@ exit_switching:
   minimum_absolute_increase: 0.25
   minimum_direction_difference_deg: 90.0
   switch_cooldown_sec: 10.0
+  # After soft, sustained cost growth, travel one more metre toward the current
+  # exit before DANGER_EXPECTED/switch. Hard obstacle/thermal/CO blocks stop now.
+  additional_travel_before_switch_m: 1.0
 
 path_validation:
   validate_on_costmap_revision: true
