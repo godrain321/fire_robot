@@ -129,6 +129,33 @@ def test_exact_fds_door_mesh_is_ignored_but_new_obstacle_elsewhere_is_mapped():
     assert len(state.dynamic_obstacles) == 1
 
 
+def test_door_mesh_sampling_margin_ignores_near_endpoint_but_not_real_obstacle():
+    state = world()
+    config = DynamicObstacleMappingConfig(
+        minimum_confirmation_observations=1,
+        ignored_fds_obstacle_ids=("DOOR_MESH",),
+        ignored_fds_mesh_xy_tolerance_m=0.3,
+    )
+    mapper = DynamicObstacleMapper(
+        meta(), state.known_occupancy_map, config,
+        ignored_fds_bounds_world=((1.9, 2.1, 1.9, 2.1, 0.0, 3.0),),
+    )
+
+    quantized_door_hit = mapper.process_thermal_rays(
+        "door-grid-neighbour", (ray((2.4, 2.0)),),
+        simulation_time=0, world_state=state,
+    )
+    assert not quantized_door_hit.observed_positions_world
+    assert not state.dynamic_obstacles
+
+    actual_new_obstacle = mapper.process_thermal_rays(
+        "separate-obstacle", (ray((2.5, 2.0)),),
+        simulation_time=0.25, world_state=state,
+    )
+    assert actual_new_obstacle.observed_positions_world == ((2.5, 2.0),)
+    assert len(actual_new_obstacle.confirmed_obstacle_ids) == 1
+
+
 def test_ignored_mesh_match_includes_z_dimension():
     state = world()
     mapper = DynamicObstacleMapper(
@@ -167,6 +194,7 @@ def test_dynamic_layer_inflation_and_revision_change_only_when_mask_changes():
     {"minimum_confirmation_observations": 0},
     {"duplicate_merge_distance_m": -1},
     {"obstacle_inflation_radius_m": -1},
+    {"ignored_fds_mesh_xy_tolerance_m": -0.1},
     {"minimum_confidence": 2},
     {"ignored_fds_obstacle_ids": ("",)},
     {"ignored_fds_obstacle_ids": ("same", "same")},

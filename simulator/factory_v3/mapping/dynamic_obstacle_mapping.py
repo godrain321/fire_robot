@@ -26,6 +26,7 @@ class DynamicObstacleMappingConfig:
     stale_obstacle_timeout_s: float = 10.0
     minimum_confidence: float = 0.6
     ignored_fds_obstacle_ids: tuple[str, ...] = ()
+    ignored_fds_mesh_xy_tolerance_m: float = 0.0
 
     @classmethod
     def from_mapping(cls, values):
@@ -48,7 +49,7 @@ class DynamicObstacleMappingConfig:
         for name in (
             "confirmation_timeout_s", "duplicate_merge_distance_m",
             "obstacle_diameter_m", "obstacle_inflation_radius_m",
-            "stale_obstacle_timeout_s",
+            "stale_obstacle_timeout_s", "ignored_fds_mesh_xy_tolerance_m",
         ):
             if float(getattr(self, name)) < 0.0:
                 raise ValueError(f"{name} must be non-negative")
@@ -215,13 +216,14 @@ class DynamicObstacleMapper:
         )
 
     def _matches_ignored_fds_mesh(self, world_position) -> bool:
-        """Match only the exact configured FDS door-mesh volume."""
+        """Match a configured door mesh plus ray-grid XY quantization margin."""
         x, y = float(world_position[0]), float(world_position[1])
         z = float(world_position[2]) if len(world_position) >= 3 else 0.0
         epsilon = 1e-9
+        xy_margin = float(self.config.ignored_fds_mesh_xy_tolerance_m)
         return any(
-            x1 - epsilon <= x <= x2 + epsilon
-            and y1 - epsilon <= y <= y2 + epsilon
+            x1 - xy_margin - epsilon <= x <= x2 + xy_margin + epsilon
+            and y1 - xy_margin - epsilon <= y <= y2 + xy_margin + epsilon
             and z1 - epsilon <= z <= z2 + epsilon
             for x1, x2, y1, y2, z1, z2 in self.ignored_fds_bounds_world
         )

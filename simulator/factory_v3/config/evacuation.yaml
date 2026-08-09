@@ -139,6 +139,9 @@ dynamic_obstacle_mapping:
   obstacle_inflation_radius_m: 0.50
   stale_obstacle_timeout_s: 10.0
   minimum_confidence: 0.6
+  # Permit the measured 0.3 m endpoint quantization around known EXIT_SOLID
+  # meshes, while preserving detection beyond that narrow door margin.
+  ignored_fds_mesh_xy_tolerance_m: 0.3
   # These are intentional EXIT_SOLID door meshes, not newly introduced
   # obstacles. Only ray endpoints inside their exact FDS XB volumes are
   # ignored; observations elsewhere continue through normal confirmation.
