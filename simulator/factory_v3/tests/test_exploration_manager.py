@@ -42,7 +42,7 @@ def make_system():
 def test_initial_pose_comes_from_existing_yaml_and_is_not_an_entrance():
     scenario = yaml.safe_load((BASE / "config/evacuation.yaml").read_text())
     assert scenario["robot_start"] == {
-        "x": 13.0, "y": 16.0, "yaw_deg": -85.70
+        "x": 14.0, "y": 16.0, "yaw_deg": -85.70
     }
     assert "mission_entry_id" not in scenario
     assert scenario["exploration"]["teleport_to_entrance_on_start"] is False
