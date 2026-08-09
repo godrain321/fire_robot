@@ -45,6 +45,7 @@ from navigation.event_replanning import (
 from navigation.exploration_manager import (
     ExplorationConfig, ExplorationManager, ExplorationPhase,
 )
+from navigation.initial_advance import InitialAdvanceConfig
 from navigation.victim_following import (
     FollowState, VictimFollowingConfig, VictimFollowingController,
     evacuation_success_ready,
@@ -595,7 +596,41 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         no_path_active = False
         return True
 
-    if exploration_config.enabled:
+    # Move physically from the configured pose before the first A* request.
+    # This is a one-shot startup phase; resumed exploration always replans
+    # directly from the robot's then-current pose without another advance.
+    initial_advance = InitialAdvanceConfig.from_robot_motion(
+        args.scenario.get("robot_motion")
+    )
+    initial_advance_pending = initial_advance.distance_m > 0.0
+    initial_advance_goal = initial_advance.target_world(
+        (state.x, state.y), state.theta
+    )
+    if initial_advance_pending:
+        start_grid = grid_map.world_to_grid(state.x, state.y)
+        advance_grid = grid_map.world_to_grid(*initial_advance_goal)
+        advance_validation = path_simplifier.evaluate_segment(
+            start_grid, advance_grid,
+            costmap=belief.final_cost_map,
+            static_obstacle_map=belief.static_obstacle_map,
+            dynamic_obstacle_map=world.dynamic_obstacle_mask(),
+            estimated_fire_map=world.estimated_fire_map,
+        )
+        if not advance_validation.safe:
+            reasons = ",".join(
+                item.value for item in advance_validation.rejection_reasons
+            )
+            raise ValueError(
+                f"initial {initial_advance.distance_m:.3f} m forward motion "
+                f"is unsafe: {reasons}"
+            )
+        follower.set_path(
+            (start_grid, advance_grid), goal_world=initial_advance_goal,
+            world_path=((state.x, state.y), initial_advance_goal),
+        )
+        goal = initial_advance_goal
+        status = "INITIAL_FORWARD_ADVANCE"
+    elif exploration_config.enabled:
         start_or_resume_exploration(ExplorationPhase.INITIAL)
     pygame_viewer = None
     thermal_viewer = None
@@ -631,6 +666,16 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                 continue
         fds_time = config.selected_fds_start_time + sim_elapsed
         world.set_simulation_time(sim_elapsed)
+        if (
+            initial_advance_pending
+            and follower.goal_reached(state, initial_advance_goal)
+        ):
+            initial_advance_pending = False
+            follower.clear()
+            goal = (state.x, state.y)
+            status = "INITIAL_FORWARD_ADVANCE_COMPLETE"
+            if exploration_config.enabled:
+                start_or_resume_exploration(ExplorationPhase.INITIAL)
         newly_blocked = set()
         sensor_due = sim_elapsed - last_sensor_time >= config.sensor_update_interval_seconds - 1e-9
         if sensor_due:
