@@ -20,7 +20,7 @@ robot_map:
 # This explicit nearby measured-free point is used instead; it is never moved
 # silently by the program.
 robot_start:
-  x: 13.0
+  x: 14.0
   y: 16.0
   yaw_deg: -85.70
 
