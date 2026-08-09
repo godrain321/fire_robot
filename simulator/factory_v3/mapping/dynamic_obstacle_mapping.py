@@ -27,6 +27,8 @@ class DynamicObstacleMappingConfig:
     minimum_confidence: float = 0.6
     ignored_fds_obstacle_ids: tuple[str, ...] = ()
     ignored_fds_mesh_xy_tolerance_m: float = 0.0
+    known_static_hit_tolerance_m: float = 0.35
+    minimum_new_obstacle_depth_difference_m: float = 0.30
 
     @classmethod
     def from_mapping(cls, values):
@@ -50,8 +52,13 @@ class DynamicObstacleMappingConfig:
             "confirmation_timeout_s", "duplicate_merge_distance_m",
             "obstacle_diameter_m", "obstacle_inflation_radius_m",
             "stale_obstacle_timeout_s", "ignored_fds_mesh_xy_tolerance_m",
+            "known_static_hit_tolerance_m",
+            "minimum_new_obstacle_depth_difference_m",
         ):
-            if float(getattr(self, name)) < 0.0:
+            value = float(getattr(self, name))
+            if not math.isfinite(value):
+                raise ValueError(f"{name} must be finite")
+            if value < 0.0:
                 raise ValueError(f"{name} must be non-negative")
         if self.obstacle_diameter_m <= 0.0:
             raise ValueError("obstacle_diameter_m must be positive")
@@ -136,6 +143,9 @@ class DynamicObstacleMapper:
                 continue
             col, row = self.metadata.world_to_grid(*point)
             if self.static_obstacle_map[row, col]:
+                rejected_static += 1
+                continue
+            if self._matches_expected_static_hit(ray, point):
                 rejected_static += 1
                 continue
             if not any(
@@ -227,6 +237,77 @@ class DynamicObstacleMapper:
             and z1 - epsilon <= z <= z2 + epsilon
             for x1, x2, y1, y2, z1, z2 in self.ignored_fds_bounds_world
         )
+
+    def _matches_expected_static_hit(self, ray, observed_point) -> bool:
+        """Reject a quantized FDS hit that agrees with the known SLAM map.
+
+        Thermal depth is simulator-only metadata.  The comparison is made in
+        the horizontal world plane because the planner occupancy map is 2-D.
+        A hit clearly in front of the first known-static cell remains a new
+        obstacle candidate; an aligned or ambiguous hit is conservatively
+        treated as the already-known structure.
+        """
+        origin = getattr(ray, "camera_origin_world", None)
+        direction = getattr(ray, "direction_world", None)
+        maximum_range = getattr(ray, "maximum_range_m", None)
+        if origin is None or direction is None or maximum_range is None:
+            return False
+        try:
+            origin_xy = (float(origin[0]), float(origin[1]))
+            direction_xy = (float(direction[0]), float(direction[1]))
+            maximum_range = float(maximum_range)
+        except (IndexError, TypeError, ValueError):
+            return False
+        values = (*origin_xy, *direction_xy, maximum_range)
+        if not all(math.isfinite(value) for value in values) or maximum_range <= 0.0:
+            return False
+        horizontal_norm = math.hypot(*direction_xy)
+        if horizontal_norm <= 1e-12:
+            return False
+        unit_direction = (
+            direction_xy[0] / horizontal_norm,
+            direction_xy[1] / horizontal_norm,
+        )
+        expected_distance = self._first_static_distance_along_ray(
+            origin_xy, unit_direction, maximum_range * horizontal_norm,
+        )
+        if expected_distance is None:
+            return False
+        observed_distance = math.dist(origin_xy, observed_point)
+        tolerance = float(self.config.known_static_hit_tolerance_m)
+        minimum_depth = float(
+            self.config.minimum_new_obstacle_depth_difference_m
+        )
+        # Anything at the expected wall, or slightly beyond it due to FDS/grid
+        # quantization, is the known structure.  Only a sufficiently earlier
+        # return is eligible to become a dynamic obstacle.
+        if observed_distance >= expected_distance - tolerance:
+            return True
+        return expected_distance - observed_distance < minimum_depth
+
+    def _first_static_distance_along_ray(
+        self, origin_xy, unit_direction_xy, maximum_distance_m,
+    ):
+        """Return the first known-static hit distance on a 2-D world ray."""
+        step = max(self.metadata.resolution_m * 0.25, 1e-3)
+        distance = 0.0
+        while distance <= maximum_distance_m + 1e-9:
+            point = (
+                origin_xy[0] + distance * unit_direction_xy[0],
+                origin_xy[1] + distance * unit_direction_xy[1],
+            )
+            if not self.metadata.is_world_position_in_bounds(*point):
+                # A camera can sit just outside a map edge; enter the map
+                # before deciding that the ray has ended.
+                if distance > self.metadata.resolution_m:
+                    return None
+                distance += step
+                continue
+            col, row = self.metadata.world_to_grid(*point)
+            if self.static_obstacle_map[row, col]:
+                return distance
+            distance += step
+        return None
 
     def _nearest_track(self, point):
         candidates = [

@@ -142,9 +142,14 @@ dynamic_obstacle_mapping:
   # Permit the measured 0.3 m endpoint quantization around known EXIT_SOLID
   # meshes, while preserving detection beyond that narrow door margin.
   ignored_fds_mesh_xy_tolerance_m: 0.3
+  # Reject FDS ray endpoints that coincide with the first wall expected from
+  # the static SLAM occupancy map. A return clearly in front remains eligible
+  # for normal multi-observation dynamic-obstacle confirmation.
+  known_static_hit_tolerance_m: 0.35
+  minimum_new_obstacle_depth_difference_m: 0.30
   # These are intentional EXIT_SOLID door meshes, not newly introduced
-  # obstacles. Only ray endpoints inside their exact FDS XB volumes are
-  # ignored; observations elsewhere continue through normal confirmation.
+  # obstacles. Their narrow configured XY quantization margin is ignored;
+  # observations elsewhere continue through normal confirmation.
   ignored_fds_obstacle_ids:
     - V3_EXIT2_0012
     - V3_EXIT2_0013

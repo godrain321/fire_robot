@@ -33,6 +33,9 @@ class ThermalRayObservation:
     hit_distance: float | None
     valid: bool
     occluded: bool
+    camera_origin_world: tuple | None = None
+    direction_world: tuple | None = None
+    maximum_range_m: float | None = None
 
 
 class ThermalCameraMLX90640:
@@ -377,6 +380,9 @@ class ThermalCameraMLX90640:
                         hit_distance=(selected.distance if selected is not None else None),
                         valid=selected is not None,
                         occluded=occluded,
+                        camera_origin_world=(cam_x, cam_y, cam_z),
+                        direction_world=(dir_x, dir_y, dir_z),
+                        maximum_range_m=self.max_range,
                     ))
 
         if return_observations:

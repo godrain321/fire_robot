@@ -26,6 +26,24 @@ def ray(endpoint=(2, 2), *, occluded=True):
     )
 
 
+def directed_ray(endpoint, *, origin=(0.0, 2.0), maximum_range=4.0):
+    dx = float(endpoint[0]) - float(origin[0])
+    dy = float(endpoint[1]) - float(origin[1])
+    length = np.hypot(dx, dy)
+    direction = (dx / length, dy / length, 0.0)
+    sample = ThermalRaySample(
+        (int(round(endpoint[0])), int(round(endpoint[1])), 0),
+        (float(endpoint[0]), float(endpoint[1]), 0.3), length, 25.0,
+    )
+    return ThermalRayObservation(
+        0, 0, 25.0, (sample,), sample.world_position,
+        sample.grid_position, length, True, True,
+        camera_origin_world=(origin[0], origin[1], 0.3),
+        direction_world=direction,
+        maximum_range_m=maximum_range,
+    )
+
+
 def world(static=None):
     static = np.zeros((5, 5), bool) if static is None else static
     return WorldState(meta(), static)
@@ -77,6 +95,68 @@ def test_known_static_occlusion_and_invalid_or_unoccluded_rays_are_not_mapped():
         mapper.process_thermal_rays(
             "known", (), simulation_time=1, world_state=state
         )
+
+
+def test_quantized_hit_near_expected_slam_wall_is_not_mapped():
+    static = np.zeros((5, 5), bool)
+    static[2, 3] = True
+    state = world(static)
+    mapper = DynamicObstacleMapper(
+        meta(), static,
+        DynamicObstacleMappingConfig(
+            minimum_confirmation_observations=1,
+            known_static_hit_tolerance_m=0.35,
+            minimum_new_obstacle_depth_difference_m=0.30,
+        ),
+    )
+
+    update = mapper.process_thermal_rays(
+        "quantized-wall", (directed_ray((2.6, 2.0)),),
+        simulation_time=0.0, world_state=state,
+    )
+
+    assert update.rejected_known_static_count == 1
+    assert not update.observed_positions_world
+    assert not state.dynamic_obstacles
+
+
+def test_hit_well_in_front_of_expected_slam_wall_remains_new_obstacle():
+    static = np.zeros((5, 5), bool)
+    static[2, 4] = True
+    state = world(static)
+    mapper = DynamicObstacleMapper(
+        meta(), static,
+        DynamicObstacleMappingConfig(
+            minimum_confirmation_observations=1,
+            known_static_hit_tolerance_m=0.35,
+            minimum_new_obstacle_depth_difference_m=0.30,
+        ),
+    )
+
+    update = mapper.process_thermal_rays(
+        "new-before-wall", (directed_ray((2.0, 2.0)),),
+        simulation_time=0.0, world_state=state,
+    )
+
+    assert update.rejected_known_static_count == 0
+    assert update.observed_positions_world == ((2.0, 2.0),)
+    assert len(update.confirmed_obstacle_ids) == 1
+
+
+def test_occlusion_without_known_static_hit_remains_new_obstacle():
+    state = world()
+    mapper = DynamicObstacleMapper(
+        meta(), state.known_occupancy_map,
+        DynamicObstacleMappingConfig(minimum_confirmation_observations=1),
+    )
+
+    update = mapper.process_thermal_rays(
+        "open-space", (directed_ray((2.0, 2.0)),),
+        simulation_time=0.0, world_state=state,
+    )
+
+    assert update.observed_positions_world == ((2.0, 2.0),)
+    assert len(update.confirmed_obstacle_ids) == 1
 
 
 def test_track_average_cannot_move_confirmed_obstacle_into_static_occupancy():
@@ -195,6 +275,9 @@ def test_dynamic_layer_inflation_and_revision_change_only_when_mask_changes():
     {"duplicate_merge_distance_m": -1},
     {"obstacle_inflation_radius_m": -1},
     {"ignored_fds_mesh_xy_tolerance_m": -0.1},
+    {"known_static_hit_tolerance_m": -0.1},
+    {"minimum_new_obstacle_depth_difference_m": -0.1},
+    {"known_static_hit_tolerance_m": float("nan")},
     {"minimum_confidence": 2},
     {"ignored_fds_obstacle_ids": ("",)},
     {"ignored_fds_obstacle_ids": ("same", "same")},

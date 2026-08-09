@@ -99,6 +99,9 @@ class FDSGroundTruthEnvironment2D(FDSGroundTruthEnvironment):
                 observations.append(ThermalRayObservation(
                     0, col, camera.ambient_temp, tuple(samples), None, None,
                     None, False, occluded,
+                    camera_origin_world=(cam_x, cam_y, self.observation_height_m),
+                    direction_world=(math.cos(yaw), math.sin(yaw), 0.0),
+                    maximum_range_m=camera.max_range,
                 ))
                 continue
             if camera.measurement_mode == "last":
@@ -121,6 +124,9 @@ class FDSGroundTruthEnvironment2D(FDSGroundTruthEnvironment):
                 0, col, measured, measured_samples,
                 selected.world_position, selected.grid_position,
                 selected.distance, True, occluded,
+                camera_origin_world=(cam_x, cam_y, self.observation_height_m),
+                direction_world=(math.cos(yaw), math.sin(yaw), 0.0),
+                maximum_range_m=camera.max_range,
             ))
         selected_time = float(self._temperature_times[time_index])
         return image, tuple(observations), selected_time
