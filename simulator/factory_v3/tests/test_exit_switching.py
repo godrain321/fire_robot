@@ -5,7 +5,8 @@ import numpy as np
 import pytest
 
 from navigation.exit_switching import (
-    ExitSwitchingConfig, RouteCostTrendMonitor, current_direction_world,
+    DelayedCostSwitch, ExitSwitchingConfig, RouteCostTrendMonitor,
+    current_direction_world,
     evaluate_path_cost, is_opposite_direction,
 )
 from world import Exit, MapMetadata, WorldState
@@ -72,6 +73,7 @@ def test_switch_config_validation():
         {"minimum_increase_ratio": -0.1},
         {"minimum_direction_difference_deg": 181},
         {"switch_cooldown_sec": -1},
+        {"additional_travel_before_switch_m": -0.1},
         {"enabled": "yes"},
     )
     for values in invalid:
@@ -100,3 +102,15 @@ def test_world_records_selection_cost_and_switch_serializably():
     assert world.exit_switch_is_cooling_down(14.9)
     assert not world.exit_switch_is_cooling_down(15)
     json.dumps(world.to_dict())
+
+
+def test_soft_cost_switch_waits_for_one_metre_of_actual_travel():
+    delay = DelayedCostSwitch(1.0)
+    delay.arm("EXIT2", "sustained_route_cost_increase", 3.0)
+
+    assert not delay.ready(3.6)
+    assert delay.travelled_distance(3.6) == pytest.approx(0.6)
+    assert delay.ready(4.0)
+    assert delay.exit_id == "EXIT2"
+    delay.clear()
+    assert not delay.active

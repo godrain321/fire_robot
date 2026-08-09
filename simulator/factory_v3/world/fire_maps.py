@@ -128,6 +128,22 @@ class GroundTruthFireMap(FireMap):
 class EstimatedFireMap(FireMap):
     """Only localized sensor observations available to mapping/planning."""
 
+    def __init__(self, metadata, *, temperature_blocked_c, co_blocked_ppm) -> None:
+        super().__init__(
+            metadata,
+            temperature_blocked_c=temperature_blocked_c,
+            co_blocked_ppm=co_blocked_ppm,
+        )
+        shape = self.shape
+        self.thermal_fire_evidence = np.zeros(shape, dtype=float)
+        self.co_gradient_evidence = np.zeros(shape, dtype=float)
+        self.temporal_consistency_evidence = np.zeros(shape, dtype=float)
+        self.combined_fire_evidence = np.zeros(shape, dtype=float)
+        self.fire_probability = np.zeros(shape, dtype=float)
+        self.fire_observation_count = np.zeros(shape, dtype=np.int32)
+        self.fire_last_observed_time = np.full(shape, np.nan, dtype=float)
+        self.fire_localization_result = None
+
     def sync_from_belief(self, belief) -> None:
         self.replace_layers(
             belief.temperature_belief_map,
@@ -135,3 +151,38 @@ class EstimatedFireMap(FireMap):
             belief.observed_mask,
             belief.last_observed_time_map,
         )
+
+    def sync_fire_localization(self, localizer) -> None:
+        """Copy sensor-derived localization layers without sharing arrays."""
+        expected = self.shape
+        names = (
+            "thermal_fire_evidence", "co_gradient_evidence",
+            "temporal_consistency_evidence", "combined_fire_evidence",
+            "fire_probability", "observation_count_map",
+            "last_observed_time_map",
+        )
+        for name in names:
+            if np.asarray(getattr(localizer, name)).shape != expected:
+                raise ValueError(f"fire localization layer {name} must have shape {expected}")
+        self.thermal_fire_evidence = np.asarray(
+            localizer.thermal_fire_evidence, dtype=float
+        ).copy()
+        self.co_gradient_evidence = np.asarray(
+            localizer.co_gradient_evidence, dtype=float
+        ).copy()
+        self.temporal_consistency_evidence = np.asarray(
+            localizer.temporal_consistency_evidence, dtype=float
+        ).copy()
+        self.combined_fire_evidence = np.asarray(
+            localizer.combined_fire_evidence, dtype=float
+        ).copy()
+        self.fire_probability = np.asarray(
+            localizer.fire_probability, dtype=float
+        ).copy()
+        self.fire_observation_count = np.asarray(
+            localizer.observation_count_map, dtype=np.int32
+        ).copy()
+        self.fire_last_observed_time = np.asarray(
+            localizer.last_observed_time_map, dtype=float
+        ).copy()
+        self.fire_localization_result = localizer.latest_result

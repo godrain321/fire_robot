@@ -19,13 +19,23 @@ class SimpleHumanDetector:
     def __init__(
         self,
         detection_range: float = 10.0,
+        horizontal_fov_deg: float = 100.0,
     ):
-        self.detection_range = detection_range
+        self.detection_range = float(detection_range)
+        self.horizontal_fov_deg = float(horizontal_fov_deg)
+        if not math.isfinite(self.detection_range) or self.detection_range <= 0.0:
+            raise ValueError("detection_range must be finite and positive")
+        if (
+            not math.isfinite(self.horizontal_fov_deg)
+            or not 0.0 < self.horizontal_fov_deg <= 360.0
+        ):
+            raise ValueError("horizontal_fov_deg must be in (0, 360]")
 
     def detect(
         self,
         robot_position: Tuple[float, float],
         humans: List[Dict],
+        robot_heading_rad: float = 0.0,
         obstacle_map: Optional[np.ndarray] = None,
         map_origin: Tuple[float, float] = (0.0, 0.0),
         map_resolution: float = 0.1,
@@ -64,7 +74,19 @@ class SimpleHumanDetector:
             if distance > self.detection_range:
                 continue
 
-            # 2. 벽/장애물 가림 조건
+            # 2. 로봇 전방 수평 시야각 조건. atan2(sin, cos)로 각도
+            # 차이를 [-pi, pi]에 정규화하여 +/-pi 경계도 처리한다.
+            if distance > 1e-9 and self.horizontal_fov_deg < 360.0:
+                bearing = math.atan2(dy, dx)
+                angle_delta = math.atan2(
+                    math.sin(bearing - robot_heading_rad),
+                    math.cos(bearing - robot_heading_rad),
+                )
+                half_fov = math.radians(self.horizontal_fov_deg) / 2.0
+                if abs(angle_delta) > half_fov + 1e-12:
+                    continue
+
+            # 3. 벽/장애물 가림 조건
             blocked = False
 
             if use_line_of_sight and obstacle_map is not None:

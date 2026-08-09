@@ -37,6 +37,8 @@ env/
 # =========================
 simulator/*/processed/*.npz
 simulator/*/processed/*.npy
+!simulator/factory_v3/processed/fds_temperature_3d_timeseries.npz
+!simulator/factory_v3/processed/fds_co_2d_timeseries.npz
 
 # =========================
 # ROS 2 generated folders

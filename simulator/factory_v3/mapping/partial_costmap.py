@@ -28,6 +28,7 @@ class PartialCostmapConfig(FireCostmapConfig):
     gas_gaussian_sigma: float = 0.5
     selected_fds_start_time: float = 0.0
     simulation_dt: float = 0.1
+    render_fps: int = 30
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -37,10 +38,11 @@ class PartialCostmapConfig(FireCostmapConfig):
             "unobserved_co_penalty": self.unobserved_co_penalty,
             "replan_distance": self.replan_distance,
             "gas_update_radius": self.gas_update_radius,
+            "selected_fds_start_time": self.selected_fds_start_time,
         }
         for name, value in non_negative.items():
-            if value < 0.0:
-                raise ValueError(f"{name} must be non-negative")
+            if not math.isfinite(float(value)) or value < 0.0:
+                raise ValueError(f"{name} must be finite and non-negative")
         positive = {
             "replan_interval_seconds": self.replan_interval_seconds,
             "sensor_update_interval_seconds": self.sensor_update_interval_seconds,
@@ -53,6 +55,12 @@ class PartialCostmapConfig(FireCostmapConfig):
         for name, value in positive.items():
             if value <= 0.0:
                 raise ValueError(f"{name} must be positive")
+        if (
+            isinstance(self.render_fps, bool)
+            or not isinstance(self.render_fps, int)
+            or self.render_fps < 1
+        ):
+            raise ValueError("render_fps must be a positive integer")
 
 
 @dataclass(frozen=True)
@@ -89,6 +97,9 @@ class PartialFireCostmap:
         self.temperature_cost_map = np.zeros(shape, dtype=float)
         self.co_cost_map = np.zeros(shape, dtype=float)
         self.unknown_cost_map = np.zeros(shape, dtype=float)
+        self.estimated_fire_cost_map = np.zeros(shape, dtype=float)
+        self.dynamic_obstacle_map = np.zeros(shape, dtype=bool)
+        self.dynamic_inflated_obstacle_map = np.zeros(shape, dtype=bool)
         self.blocked_mask = static.copy()
         self.final_cost_map = np.full(shape, config.base_cost, dtype=float)
         self.last_observed_time_map = np.full(shape, np.nan, dtype=float)
@@ -210,6 +221,63 @@ class PartialFireCostmap:
                 changed.add(node)
         return self._finish_update(changed, old_blocked)
 
+    def update_estimated_fire_probability(
+        self, probability_map, *, cost_weight: float,
+        minimum_probability: float,
+    ) -> BeliefUpdate:
+        """Apply a finite sensor-inferred risk layer without creating blocks."""
+        values = np.asarray(probability_map, dtype=float)
+        if values.shape != self.shape:
+            raise ValueError(f"fire probability shape={values.shape}, expected={self.shape}")
+        if not np.all(np.isfinite(values)) or np.any((values < 0.0) | (values > 1.0)):
+            raise ValueError("fire probabilities must be finite and in [0,1]")
+        if cost_weight < 0.0 or not 0.0 <= minimum_probability <= 1.0:
+            raise ValueError("invalid estimated fire cost settings")
+        old_blocked = self._snapshot_blocked()
+        new_cost = np.where(
+            values >= minimum_probability, values * float(cost_weight), 0.0
+        )
+        changed_indices = np.argwhere(~np.isclose(
+            new_cost, self.estimated_fire_cost_map, rtol=1e-9, atol=1e-12
+        ))
+        changed = {(int(col), int(row)) for row, col in changed_indices}
+        self.estimated_fire_cost_map = new_cost
+        return self._finish_update(changed, old_blocked)
+
+    def update_dynamic_obstacles(
+        self, obstacle_map, *, inflation_radius_m: float,
+    ) -> BeliefUpdate:
+        """Replace sensor-known dynamic occupancy and inflate it for planning."""
+        raw = np.asarray(obstacle_map, dtype=bool)
+        if raw.shape != self.shape:
+            raise ValueError(f"dynamic obstacle shape={raw.shape}, expected={self.shape}")
+        if inflation_radius_m < 0.0:
+            raise ValueError("dynamic obstacle inflation radius must be non-negative")
+        inflated = raw.copy()
+        radius_cells = int(math.ceil(
+            inflation_radius_m / self.grid_map.resolution
+        ))
+        if radius_cells:
+            for row, col in np.argwhere(raw):
+                for dy in range(-radius_cells, radius_cells + 1):
+                    for dx in range(-radius_cells, radius_cells + 1):
+                        if math.hypot(dx, dy) * self.grid_map.resolution > inflation_radius_m + 1e-12:
+                            continue
+                        yy, xx = int(row + dy), int(col + dx)
+                        if 0 <= yy < self.shape[0] and 0 <= xx < self.shape[1]:
+                            inflated[yy, xx] = True
+        changed_indices = np.argwhere(
+            (raw != self.dynamic_obstacle_map)
+            | (inflated != self.dynamic_inflated_obstacle_map)
+        )
+        if changed_indices.size == 0:
+            return BeliefUpdate(frozenset(), frozenset())
+        old_blocked = self._snapshot_blocked()
+        self.dynamic_obstacle_map = raw.copy()
+        self.dynamic_inflated_obstacle_map = inflated
+        changed = {(int(col), int(row)) for row, col in changed_indices}
+        return self._finish_update(changed, old_blocked)
+
     def recalculate(self) -> None:
         """Rebuild costs using observed values and per-modality uncertainty."""
         cfg = self.config
@@ -257,13 +325,15 @@ class PartialFireCostmap:
             self.co_observed_mask & (self.co_belief_map >= cfg.co_blocked)
         )
         self.blocked_mask = (
-            self.static_obstacle_map | temperature_blocked | co_blocked
+            self.static_obstacle_map | self.dynamic_inflated_obstacle_map
+            | temperature_blocked | co_blocked
         )
         self.final_cost_map = (
             cfg.base_cost
             + self.temperature_cost_map
             + self.co_cost_map
             + self.unknown_cost_map
+            + self.estimated_fire_cost_map
         )
         self.final_cost_map[self.blocked_mask] = np.inf
         self._validate_layers()
@@ -275,6 +345,8 @@ class PartialFireCostmap:
             "temperature_observed_mask", "co_observed_mask",
             "temperature_belief_map", "co_belief_map",
             "temperature_cost_map", "co_cost_map", "unknown_cost_map",
+            "estimated_fire_cost_map",
+            "dynamic_obstacle_map", "dynamic_inflated_obstacle_map",
             "blocked_mask", "final_cost_map", "last_observed_time_map",
         )
         mismatches = {

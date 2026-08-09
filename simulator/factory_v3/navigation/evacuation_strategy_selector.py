@@ -352,6 +352,7 @@ class EvacuationStrategySelector:
     def replan_to_safe_exit(
         self, *, world_state, current_position_world, cost_map,
         costmap_revision: int, created_at: float, excluded_exit_ids=(),
+        risk_first: bool = False,
     ) -> EvacuationRouteDecision:
         hazard = self.hazard_tracker.evaluate(
             world_state.estimated_fire_map, evaluated_at=created_at,
@@ -362,6 +363,7 @@ class EvacuationStrategySelector:
             costmap_revision, created_at,
             EvacuationStrategy.REPLAN_TO_ALTERNATIVE_EXIT,
             excluded_exit_ids=excluded_exit_ids,
+            risk_first=risk_first,
         )
 
     def replan_to_opposite_exit(
@@ -429,7 +431,7 @@ class EvacuationStrategySelector:
 
     def _plan_exits(
         self, world, start_world, cost_map, hazard, revision, created_at, strategy,
-        *, excluded_exit_ids=(), candidate_exit_ids=None,
+        *, excluded_exit_ids=(), candidate_exit_ids=None, risk_first=False,
     ):
         dynamic = world.dynamic_obstacle_mask()
         effective = self._effective_cost(
@@ -452,6 +454,7 @@ class EvacuationStrategySelector:
             dynamic_obstacle_map=dynamic,
             estimated_fire_map=world.estimated_fire_map,
             created_at=created_at,
+            risk_first=risk_first,
         )
         world.record_exit_evaluations(plan)
         if not plan.success:

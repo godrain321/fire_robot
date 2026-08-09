@@ -1,5 +1,8 @@
 csv_temp3d/*.csv
-processed/*.npz
+# Runtime-ready temperature/CO NPZ assets are versioned. Keep local backups
+# and temporary packer outputs out of Git.
+processed/*.pre_*.npz
+processed/*.tmp.npz
 factory_v3_cat*
 *.s3d
 *.s3d.sz
@@ -10,4 +13,3 @@ factory_v3_cat*
 *_cpu.csv
 *_hrr.csv
 *_steps.csv
-

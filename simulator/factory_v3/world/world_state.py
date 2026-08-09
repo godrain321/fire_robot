@@ -64,6 +64,10 @@ class WorldState:
             raise ValueError(f"static obstacle shape={static.shape}, expected={expected}")
         self.static_obstacle_map = static.copy()
         self.static_obstacle_map.setflags(write=False)
+        # Defaults to the planner layer; the simulator may replace this with
+        # its non-inflated SLAM occupancy through the explicit setter below.
+        self.known_occupancy_map = static.copy()
+        self.known_occupancy_map.setflags(write=False)
         self.dynamic_obstacles: dict[str, DynamicObstacle] = {}
         self.exits: dict[str, Exit] = {}
         self.victims: dict[str, Victim] = {}
@@ -92,6 +96,14 @@ class WorldState:
         self.mission_entry_id: str | None = None
         self.mission_entry_position_world: tuple[float, float] | None = None
         self.hazard_knowledge_decision = None
+        self.fire_localization_result = None
+        self.latest_exit_blockage_results: dict[str, Any] = {}
+        self.last_perception_replan_reason: str | None = None
+        self.last_replan_decision = None
+        self.last_processed_costmap_revision: int | None = None
+        self.last_replan_time: float | None = None
+        self.last_replan_robot_pose: tuple[float, float] | None = None
+        self.last_selected_exit_id: str | None = None
         self.active_route_decision = None
         self.active_route_valid = False
         self.active_route_invalid_reason: str | None = None
@@ -272,7 +284,10 @@ class WorldState:
     ) -> ExitCheckRecord:
         self.update_exit_status(
             exit_id, status, sim_time=sim_time,
-            reason=reason if status in (ExitStatus.BLOCKED, ExitStatus.DANGEROUS)
+            reason=reason if status in (
+                ExitStatus.BLOCKED, ExitStatus.DANGEROUS,
+                ExitStatus.DANGER_EXPECTED,
+            )
             else None,
         )
         self.exit_visit_status[exit_id] = ExitVisitStatus.CHECKED
@@ -310,6 +325,18 @@ class WorldState:
         if isinstance(revision, bool) or int(revision) < self.costmap_revision:
             raise ValueError("costmap revision must be monotonic and non-negative")
         self.costmap_revision = int(revision)
+
+    def record_replan_decision(
+        self, decision, *, costmap_revision: int, sim_time: float,
+        robot_pose_world: tuple[float, float], selected_exit_id: str | None,
+    ) -> None:
+        """Store a typed event decision without dynamically adding fields."""
+        self.last_replan_decision = decision
+        self.last_processed_costmap_revision = int(costmap_revision)
+        self.last_replan_time = float(sim_time)
+        self.last_replan_robot_pose = tuple(map(float, robot_pose_world))
+        self.last_selected_exit_id = selected_exit_id
+        self.last_perception_replan_reason = decision.reason.value
 
     def set_active_route_decision(self, decision) -> None:
         if not decision.success:
@@ -436,6 +463,53 @@ class WorldState:
         self.exit_switch_cooldown_until = float(sim_time) + float(cooldown_seconds)
         self.last_exit_switch_validation = str(validation_result)
 
+    def record_cost_driven_exit_switch(
+        self, *, previous_exit_id: str, new_exit_id: str, reason: str,
+        sim_time: float, cooldown_seconds: float, validation_result: str,
+    ) -> None:
+        """Atomically retain the rejected exit's cost-trend safety state."""
+        previous_exit_id = str(previous_exit_id)
+        new_exit_id = str(new_exit_id)
+        if previous_exit_id == new_exit_id:
+            raise ValueError("cost-driven exit switch requires a different exit")
+        self.get_exit(previous_exit_id)
+        self.get_exit(new_exit_id)
+        self.mark_replaced_unknown_exit_danger_expected(
+            previous_exit_id=previous_exit_id,
+            new_exit_id=new_exit_id,
+            reason=reason,
+            sim_time=sim_time,
+        )
+        self.record_exit_switch(
+            previous_exit_id=previous_exit_id,
+            new_exit_id=new_exit_id,
+            reason=reason,
+            sim_time=sim_time,
+            cooldown_seconds=cooldown_seconds,
+            validation_result=validation_result,
+        )
+
+    def mark_replaced_unknown_exit_danger_expected(
+        self, *, previous_exit_id: str | None, new_exit_id: str | None,
+        reason: str, sim_time: float,
+    ) -> bool:
+        """Retain why a validated replan abandoned an unchecked exit."""
+        if (
+            previous_exit_id is None
+            or new_exit_id is None
+            or previous_exit_id == new_exit_id
+        ):
+            return False
+        previous = self.get_exit(previous_exit_id)
+        self.get_exit(new_exit_id)
+        if previous.status is not ExitStatus.UNKNOWN:
+            return False
+        self.update_exit_status(
+            previous_exit_id, ExitStatus.DANGER_EXPECTED,
+            sim_time=sim_time, reason=reason,
+        )
+        return True
+
     def exit_switch_is_cooling_down(self, sim_time: float) -> bool:
         return (
             self.exit_switch_cooldown_until is not None
@@ -451,6 +525,13 @@ class WorldState:
         if require_free and self.static_obstacle_map[row, col]:
             raise ValueError(f"{label} {(x, y)} is inside a static obstacle at {(col, row)}")
         return col, row
+
+    def set_known_occupancy_map(self, occupancy_map) -> None:
+        values = np.asarray(occupancy_map, dtype=bool)
+        if values.shape != self.static_obstacle_map.shape:
+            raise ValueError("known occupancy map shape mismatch")
+        self.known_occupancy_map = values.copy()
+        self.known_occupancy_map.setflags(write=False)
 
     def add_exit(self, exit_item: Exit) -> None:
         if exit_item.exit_id in self.exits:
@@ -468,9 +549,18 @@ class WorldState:
             raise KeyError(f"unknown exit_id: {exit_id}") from exc
 
     def update_exit_status(self, exit_id: str, status: ExitStatus, **context) -> None:
-        self.get_exit(exit_id).update_status(status, sim_time=context.pop("sim_time", self.simulation_time), **context)
+        exit_item = self.get_exit(exit_id)
+        previous = exit_item.status
+        exit_item.update_status(status, sim_time=context.pop("sim_time", self.simulation_time), **context)
+        if status is not previous:
+            self.environment_revision += 1
         if self.current_target_exit_id == exit_id:
             self.current_target_is_usable = status is ExitStatus.USABLE
+
+    def record_exit_blockage_result(self, result) -> None:
+        if result.exit_id not in self.exits:
+            raise KeyError(f"unknown exit_id: {result.exit_id}")
+        self.latest_exit_blockage_results[result.exit_id] = result
 
     def add_victim(self, victim: Victim) -> None:
         if victim.victim_id in self.victims:
@@ -491,6 +581,17 @@ class WorldState:
             if not hasattr(victim, key):
                 raise ValueError(f"unknown victim field: {key}")
             setattr(victim, key, value)
+
+    def update_victim_position(self, victim_id: str, position_world) -> None:
+        """Store an independently moving victim pose without changing status."""
+        victim = self.get_victim(victim_id)
+        col, row = self.validate_position(
+            position_world, label=f"victim {victim.victim_id} position"
+        )
+        victim.position_world = (
+            float(position_world[0]), float(position_world[1])
+        )
+        victim.current_grid_position = (col, row)
 
     def attach_victim_following(self, controller) -> None:
         if controller.metadata != self.map_metadata:
@@ -565,7 +666,14 @@ class WorldState:
         )
 
     def _validate_dynamic_obstacle(self, obstacle: DynamicObstacle) -> None:
-        self.validate_position(obstacle.position_world, label=f"dynamic obstacle {obstacle.obstacle_id}")
+        col, row = self.validate_position(
+            obstacle.position_world, require_free=False,
+            label=f"dynamic obstacle {obstacle.obstacle_id}",
+        )
+        if self.known_occupancy_map[row, col]:
+            raise ValueError(
+                f"dynamic obstacle {obstacle.obstacle_id} overlaps known static occupancy"
+            )
         x1, x2, y1, y2 = self._obstacle_extent(obstacle)
         for point in ((x1, y1), (x2, y2)):
             if not self.map_metadata.is_world_position_in_bounds(*point):
@@ -594,6 +702,10 @@ class WorldState:
         snapshot = (
             obstacle.position_world, obstacle.status, obstacle.confidence,
             obstacle.first_seen_at, obstacle.last_seen_at,
+            obstacle.observation_count,
+        )
+        semantic_before = (
+            obstacle.position_world, obstacle.status, obstacle.confidence,
         )
         obstacle.update(sim_time=changes.pop("sim_time", self.simulation_time), **changes)
         try:
@@ -602,9 +714,14 @@ class WorldState:
             (
                 obstacle.position_world, obstacle.status, obstacle.confidence,
                 obstacle.first_seen_at, obstacle.last_seen_at,
+                obstacle.observation_count,
             ) = snapshot
             raise
-        self.environment_revision += 1
+        semantic_after = (
+            obstacle.position_world, obstacle.status, obstacle.confidence,
+        )
+        if semantic_after != semantic_before:
+            self.environment_revision += 1
 
     def clear_dynamic_obstacle(self, obstacle_id: str, *, sim_time: float | None = None) -> None:
         self.update_dynamic_obstacle(
@@ -684,6 +801,17 @@ class WorldState:
             "mission_entry_id": self.mission_entry_id,
             "mission_entry_position_world": self.mission_entry_position_world,
             "hazard_knowledge_decision": self.hazard_knowledge_decision,
+            "fire_localization_result": self.fire_localization_result,
+            "latest_exit_blockage_results": self.latest_exit_blockage_results,
+            "last_perception_replan_reason": self.last_perception_replan_reason,
+            "last_replan_decision": (
+                None if self.last_replan_decision is None else
+                self.last_replan_decision.to_dict()
+            ),
+            "last_processed_costmap_revision": self.last_processed_costmap_revision,
+            "last_replan_time": self.last_replan_time,
+            "last_replan_robot_pose": self.last_replan_robot_pose,
+            "last_selected_exit_id": self.last_selected_exit_id,
             "active_route_decision": self.active_route_decision,
             "active_route_valid": self.active_route_valid,
             "active_route_invalid_reason": self.active_route_invalid_reason,
@@ -738,6 +866,7 @@ class WorldState:
             ),
             "victim_following_events": self.victim_following_events,
             "static_obstacle_map": self.static_obstacle_map,
+            "known_occupancy_map": self.known_occupancy_map,
             "dynamic_obstacles": self.dynamic_obstacles,
             "exits": self.exits,
             "victims": self.victims,
@@ -752,6 +881,13 @@ class WorldState:
                 "co_ppm": self.estimated_fire_map.co_ppm,
                 "observed_mask": self.estimated_fire_map.observed_mask,
                 "last_observed_time": self.estimated_fire_map.last_observed_time,
+                "thermal_fire_evidence": self.estimated_fire_map.thermal_fire_evidence,
+                "co_gradient_evidence": self.estimated_fire_map.co_gradient_evidence,
+                "combined_fire_evidence": self.estimated_fire_map.combined_fire_evidence,
+                "fire_probability": self.estimated_fire_map.fire_probability,
+                "fire_observation_count": self.estimated_fire_map.fire_observation_count,
+                "fire_last_observed_time": self.estimated_fire_map.fire_last_observed_time,
+                "fire_localization_result": self.estimated_fire_map.fire_localization_result,
             },
         }
         result = _json_value(payload)

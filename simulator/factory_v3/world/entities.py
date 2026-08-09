@@ -25,6 +25,7 @@ class ExitStatus(Enum):
     USABLE = "usable"
     BLOCKED = "blocked"
     DANGEROUS = "dangerous"
+    DANGER_EXPECTED = "danger_expected"
 
 
 class ExitVisitStatus(Enum):
@@ -96,13 +97,20 @@ class Exit:
             raise TypeError("status must be ExitStatus")
         if status is ExitStatus.BLOCKED and not reason:
             raise ValueError("BLOCKED exit requires a reason")
-        if status is ExitStatus.DANGEROUS and not reason:
-            raise ValueError("DANGEROUS exit requires a reason")
+        if (
+            status in (ExitStatus.DANGEROUS, ExitStatus.DANGER_EXPECTED)
+            and not reason
+        ):
+            raise ValueError(f"{status.name} exit requires a reason")
         previous = self.status
         self.status = status
         self.last_checked_at = None if sim_time is None else float(sim_time)
         self.blocked_reason = reason if status is ExitStatus.BLOCKED else None
-        self.danger_reason = reason if status is ExitStatus.DANGEROUS else None
+        self.danger_reason = (
+            reason if status in (
+                ExitStatus.DANGEROUS, ExitStatus.DANGER_EXPECTED,
+            ) else None
+        )
         for name in ("temperature_c", "co_ppm", "path_cost"):
             if name in measurements:
                 setattr(self, name, float(measurements[name]))
@@ -252,6 +260,8 @@ class DynamicObstacle:
     last_seen_at: float | None = None
     source: str = "unknown"
     confidence: float = 0.0
+    observation_count: int = 0
+    confirmed: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -272,8 +282,15 @@ class DynamicObstacle:
         if not 0.0 <= float(self.confidence) <= 1.0:
             raise ValueError("confidence must be between 0 and 1")
         self.confidence = float(self.confidence)
+        if self.observation_count < 0:
+            raise ValueError("observation_count must be non-negative")
+        if type(self.confirmed) is not bool:
+            raise TypeError("confirmed must be bool")
 
-    def update(self, *, position_world=None, status=None, sim_time=None, confidence=None) -> None:
+    def update(
+        self, *, position_world=None, status=None, sim_time=None,
+        confidence=None, observation_count=None,
+    ) -> None:
         if position_world is not None:
             self.position_world = _position(position_world)
         if status is not None:
@@ -287,6 +304,11 @@ class DynamicObstacle:
             if not 0.0 <= confidence <= 1.0:
                 raise ValueError("confidence must be between 0 and 1")
             self.confidence = confidence
+        if observation_count is not None:
+            observation_count = int(observation_count)
+            if observation_count < self.observation_count:
+                raise ValueError("observation_count must not decrease")
+            self.observation_count = observation_count
         if self.first_seen_at is None and sim_time is not None:
             self.first_seen_at = float(sim_time)
         self.last_seen_at = None if sim_time is None else float(sim_time)

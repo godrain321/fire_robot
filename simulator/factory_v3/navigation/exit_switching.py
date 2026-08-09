@@ -21,6 +21,7 @@ class ExitSwitchingConfig:
     minimum_absolute_increase: float = 0.25
     minimum_direction_difference_deg: float = 90.0
     switch_cooldown_sec: float = 10.0
+    additional_travel_before_switch_m: float = 0.0
 
     def __post_init__(self) -> None:
         if not isinstance(self.enabled, bool):
@@ -35,7 +36,7 @@ class ExitSwitchingConfig:
             )
         for name in (
             "minimum_increase_ratio", "minimum_absolute_increase",
-            "switch_cooldown_sec",
+            "switch_cooldown_sec", "additional_travel_before_switch_m",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not math.isfinite(float(value)) or value < 0:
@@ -72,6 +73,49 @@ class CostTrendDecision:
     baseline_average_cost: float | None
     current_average_cost: float | None
     reason: str | None
+
+
+@dataclass
+class DelayedCostSwitch:
+    """Delay a soft cost-driven switch by actual robot travel distance."""
+
+    required_distance_m: float
+    exit_id: str | None = None
+    reason: str | None = None
+    start_travel_distance_m: float | None = None
+
+    def __post_init__(self) -> None:
+        value = float(self.required_distance_m)
+        if not math.isfinite(value) or value < 0.0:
+            raise ValueError("required delayed-switch distance must be non-negative")
+        self.required_distance_m = value
+
+    @property
+    def active(self) -> bool:
+        return self.exit_id is not None and self.start_travel_distance_m is not None
+
+    def arm(self, exit_id: str, reason: str, travelled_distance_m: float) -> None:
+        travelled_distance_m = float(travelled_distance_m)
+        if not math.isfinite(travelled_distance_m) or travelled_distance_m < 0.0:
+            raise ValueError("travelled distance must be finite and non-negative")
+        self.exit_id = str(exit_id)
+        self.reason = str(reason)
+        self.start_travel_distance_m = travelled_distance_m
+
+    def travelled_distance(self, travelled_distance_m: float) -> float:
+        if not self.active:
+            return 0.0
+        return max(0.0, float(travelled_distance_m) - self.start_travel_distance_m)
+
+    def ready(self, travelled_distance_m: float) -> bool:
+        return self.active and self.travelled_distance(
+            travelled_distance_m
+        ) >= self.required_distance_m - 1e-12
+
+    def clear(self) -> None:
+        self.exit_id = None
+        self.reason = None
+        self.start_travel_distance_m = None
 
 
 def evaluate_path_cost(path_grid, cost_map) -> tuple[float, float, float] | None:

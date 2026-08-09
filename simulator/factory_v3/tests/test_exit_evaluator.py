@@ -61,6 +61,7 @@ def test_single_safe_exit_metrics_and_json():
 @pytest.mark.parametrize("status,reason", [
     (ExitStatus.BLOCKED, ExitRejectionReason.EXIT_BLOCKED),
     (ExitStatus.DANGEROUS, ExitRejectionReason.EXIT_DANGEROUS),
+    (ExitStatus.DANGER_EXPECTED, ExitRejectionReason.EXIT_DANGER_EXPECTED),
 ])
 def test_exit_status_rejected_before_path(status, reason):
     result, *_ = evaluate(Exit("E", (4, 0), (4, 0), status))
@@ -124,6 +125,25 @@ def test_diagonal_length_and_risk_cost_are_separate():
     assert result.accumulated_risk_cost == pytest.approx(2.0)
 
 
+@pytest.mark.parametrize("setting,value", [
+    ("dangerous_accumulated_risk_cost", 3.0),
+    ("dangerous_average_risk_cost", 1.5),
+    ("dangerous_max_cell_risk_cost", 1.5),
+])
+def test_high_finite_path_cost_is_rejected_as_dangerous(setting, value):
+    metadata, fire, cost, static = environment()
+    cost[:] = 3.0
+    result = evaluator(metadata, **{setting: value}).evaluate(
+        Exit("E", (2, 0), (2, 0)), (0, 0), cost_map=cost,
+        static_obstacle_map=static,
+        dynamic_obstacle_map=np.zeros_like(static),
+        estimated_fire_map=fire, evaluated_at=1,
+    )
+    assert result.reachable
+    assert not result.accepted
+    assert ExitRejectionReason.PATH_RISK_COST_EXCEEDED in result.rejection_reasons
+
+
 @pytest.mark.parametrize("kind,value,reason", [
     ("temperature", 59.9, None),
     ("temperature", 60.0, ExitRejectionReason.TEMPERATURE_LIMIT_EXCEEDED),
@@ -170,6 +190,8 @@ def test_config_validation():
         {"exit_neighborhood_radius_m": -1},
         {"approach_search_radius_m": 0},
         {"usable_confirmation_max_unknown_ratio": 1.1},
+        {"dangerous_average_risk_cost": 0},
+        {"dangerous_max_cell_risk_cost": np.inf},
     ):
         with pytest.raises(ValueError):
             ExitEvaluationConfig(**kwargs)

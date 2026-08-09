@@ -13,12 +13,23 @@ def test_exit_creation_and_status_history():
     assert item.danger_reason == "hot"
     assert item.status_history[-1].previous is ExitStatus.UNKNOWN
 
+    item.update_status(
+        ExitStatus.DANGER_EXPECTED, sim_time=3.0,
+        reason="sustained route cost increase",
+    )
+    assert item.status is ExitStatus.DANGER_EXPECTED
+    assert item.danger_reason == "sustained route cost increase"
+
 
 def test_exit_rejects_invalid_status_and_missing_reason():
     with pytest.raises(TypeError):
         Exit("EXIT1", (0, 1), (1, 1), status="usable")
     with pytest.raises(ValueError):
         Exit("EXIT1", (0, 1), (1, 1)).update_status(ExitStatus.BLOCKED)
+    with pytest.raises(ValueError):
+        Exit("EXIT1", (0, 1), (1, 1)).update_status(
+            ExitStatus.DANGER_EXPECTED
+        )
 
 
 def test_victim_boolean_properties_stay_consistent():

@@ -1,5 +1,22 @@
 # factory_v3
 
+## Portable runtime data
+
+`run_partial_costmap_evacuation.py` uses the versioned sensor Ground Truth
+archives below and does not require raw FDS `.smv`, `.sf`, or `.s3d` files:
+
+- `processed/fds_temperature_3d_timeseries.npz`
+- `processed/fds_co_2d_timeseries.npz`
+
+Run the simulator from this directory with:
+
+```bash
+python3 run_partial_costmap_evacuation.py --no-thermal-window
+```
+
+Raw FDS results are only needed when regenerating these archives. Use
+`prepare_temperature_npz.sh` for temperature and `pack_co_to_npz.py` for CO.
+
 `factory_v3` is a rigidly rotated derivative of the current `factory_v2`. The
 principal axis through the existing EXIT1 solid marker is rotated onto the
 positive FDS X axis. Nothing below `factory_v2` is written by the generator.

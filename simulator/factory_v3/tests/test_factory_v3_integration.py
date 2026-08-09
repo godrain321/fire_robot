@@ -8,10 +8,16 @@ import numpy as np
 import yaml
 
 from human_detection_sim import SimpleHumanDetector
-from mapping.fire_costmap import load_factory_geometry
+from mapping.fire_costmap import (
+    load_factory_geometry, obstacles_for_initial_robot_map,
+)
 from mapping.grid_map import GridMap
+from navigation.victim_scripted_motion import (
+    ScriptedVictimMotionConfig, ScriptedVictimMotionController,
+)
 from sensors.thermal_camera import ThermalCameraMLX90640
 from simulation.ground_truth import FDSGroundTruthEnvironment
+from world.fire_maps import MapMetadata
 
 
 BASE = Path(__file__).resolve().parents[1]
@@ -22,6 +28,7 @@ def _scenario_grid():
     scenario = yaml.safe_load(
         (BASE / "config" / "evacuation.yaml").read_text(encoding="utf-8")
     )
+    obstacles = obstacles_for_initial_robot_map(obstacles, scenario)
     grid = GridMap(
         mesh, obstacles, holes,
         resolution=scenario["planner"]["grid_resolution_m"],
@@ -31,9 +38,62 @@ def _scenario_grid():
 
 
 def test_catf_geometry_is_loaded():
-    mesh, obstacles, _ = load_factory_geometry(BASE / "factory_v3.fds")
+    mesh, obstacles, holes = load_factory_geometry(BASE / "factory_v3.fds")
     assert mesh == [1.8, 30.0, 5.6, 28.0, 0.0, 3.0]
     assert len(obstacles) > 600
+
+
+def test_exit2_fire_line_replaces_strong_remote_oil_source():
+    scenario_text = (BASE / "generated" / "scenario.inc").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        "ID='MACHINERY_OIL_FIRE_OIL', HRRPUA=250.000"
+        in scenario_text
+    )
+    assert (
+        "ID='EXIT2_BLOCKING_FIRE', HRRPUA=1200.000"
+        in scenario_text
+    )
+    fire_line = next(
+        line for line in scenario_text.splitlines()
+        if "ID='V3_EXIT2_BLOCKING_FIRE_001'" in line
+    )
+    assert "XB=19.200,21.400,9.400,9.600,0.000,0.000" in fire_line
+    assert "XYZ=21.200,9.500,0.000" in fire_line
+    assert "SPREAD_RATE=0.0300" in fire_line
+
+
+def test_sensor_costmap_makes_observed_developing_fire_costly():
+    scenario = yaml.safe_load(
+        (BASE / "config" / "evacuation.yaml").read_text(encoding="utf-8")
+    )
+    config = scenario["sensor_costmap"]
+    assert config["temperature_weight"] == 24.0
+    assert config["temperature_power"] == 1.5
+
+    # An observed 40 C cell is cautionary well before the unchanged 60 C
+    # hard block. Unknown cells are not involved in this calculation.
+    normalized = (40.0 - 20.0) / (60.0 - 20.0)
+    observed_temperature_cost = (
+        config["temperature_weight"]
+        * normalized ** config["temperature_power"]
+    )
+    assert observed_temperature_cost > 8.0
+
+
+def test_exit1_scenario_blocker_is_loaded_without_changing_base_includes():
+    _, obstacles, _ = load_factory_geometry(BASE / "factory_v3.fds")
+    blocker_xb = [7.8, 10.8, 17.8, 18.0, 0.0, 1.4]
+    assert any(item["xb"] == blocker_xb for item in obstacles)
+    scenario = yaml.safe_load(
+        (BASE / "config" / "evacuation.yaml").read_text(encoding="utf-8")
+    )
+    exit1 = next(item for item in scenario["exits"] if item["id"] == "EXIT1")
+    assert exit1["initial_status"] == "unknown"
+    assert exit1["approach"] == {"x": 9.4, "y": 17.4}
+    planner_obstacles = obstacles_for_initial_robot_map(obstacles, scenario)
+    assert not any(item["xb"] == blocker_xb for item in planner_obstacles)
 
 
 def test_world_grid_roundtrip_and_boundaries():
@@ -49,6 +109,19 @@ def test_world_grid_roundtrip_and_boundaries():
         assert abs(roundtrip[0] - x) <= grid.resolution / 2 + 1e-6
         assert abs(roundtrip[1] - y) <= grid.resolution / 2 + 1e-6
     assert not grid.in_bounds(grid.world_to_grid(mesh[1] + grid.resolution, mesh[3]))
+
+
+def test_smokeview_boundary_display_is_separate_from_inflated_planner_map():
+    mesh, obstacles, holes = load_factory_geometry(BASE / "factory_v3.fds")
+    point = (13.2, 11.4)
+    planner = GridMap(mesh, obstacles, holes, resolution=0.2, clearance=0.45)
+    display = GridMap(
+        mesh, obstacles, holes, resolution=0.2, clearance=0.0,
+        include_lower_obstacle_boundary=False,
+    )
+    node = planner.world_to_grid(*point)
+    assert planner.is_blocked(node)  # Robot clearance remains conservative.
+    assert not display.is_blocked(node)  # Smokeview/FDS lower boundary stays open.
 
 
 def test_configured_mission_points_are_explicit_and_free():
@@ -82,19 +155,49 @@ def test_thermal_camera_respects_nonzero_mesh_origin():
     assert observations[0].ray_cells[0].grid_position[0] >= 0
 
 
-def test_victim_starts_outside_initial_detection_range():
+def test_victim_starts_hidden_by_slam_occupancy_before_scripted_motion():
     _, _, grid, scenario = _scenario_grid()
-    detector = SimpleHumanDetector(scenario["human_detection_range_m"])
+    detector = SimpleHumanDetector(
+        scenario["human_detection_range_m"],
+        scenario["human_detection_horizontal_fov_deg"],
+    )
     start = scenario["robot_start"]
     victim = scenario["humans"][0]
     detections = detector.detect(
         (start["x"], start["y"]), scenario["humans"],
+        robot_heading_rad=np.radians(start["yaw_deg"]),
         obstacle_map=np.asarray(grid.occupancy, dtype=bool),
         map_origin=(grid.x_min, grid.y_min), map_resolution=grid.resolution,
     )
-    distance = np.hypot(victim["x"] - start["x"], victim["y"] - start["y"])
-    assert distance > scenario["human_detection_range_m"]
+    assert (victim["x"], victim["y"]) == (19.4, 19.0)
     assert detections == []
+
+
+def test_configured_victim_wall_route_reaches_requested_destination():
+    _, _, grid, scenario = _scenario_grid()
+    victim = scenario["humans"][0]
+    motion = ScriptedVictimMotionConfig.from_mapping(victim["scripted_motion"])
+    assert motion.speed_mps == 1.2
+    assert scenario["victim_following"]["victim_speed_mps"] == 1.2
+    controller = ScriptedVictimMotionController(
+        # The WorldState metadata contract uses the same origin/resolution.
+        MapMetadata(
+            grid.x_min, grid.x_max, grid.y_min, grid.y_max,
+            grid.resolution, grid.width, grid.height, (grid.x_min, grid.y_min),
+        ),
+        victim["id"], (victim["x"], victim["y"]), motion,
+    )
+    static = np.asarray(grid.occupancy, dtype=bool)
+    dynamic = np.zeros_like(static)
+    for _ in range(200):
+        controller.update(
+            dt=0.1, static_obstacle_map=static,
+            dynamic_obstacle_map=dynamic,
+        )
+        if controller.completed:
+            break
+    assert controller.completed
+    assert controller.position_world == (14.4, 15.0)
 
 
 def test_ground_truth_loads_mock_temperature_and_co(monkeypatch, tmp_path):

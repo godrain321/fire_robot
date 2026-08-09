@@ -41,10 +41,14 @@ class FDSGroundTruthEnvironment:
         fds_path: str | Path,
         temperature_npz_path: str | Path,
         fds_result_dir: str | Path,
+        co_npz_path: str | Path | None = None,
     ) -> None:
         self.mesh_xb, self.obstacles, self.holes = load_factory_geometry(fds_path)
         self._load_temperature(temperature_npz_path)
-        self._load_co(fds_result_dir)
+        if co_npz_path is None:
+            self._load_co(fds_result_dir)
+        else:
+            self._load_co_npz(co_npz_path)
         self._obstacle_volume_zyx = self._build_obstacle_volume()
 
     @property
@@ -119,7 +123,7 @@ class FDSGroundTruthEnvironment:
             raise ValueError("Carbon-monoxide FDS slice not found")
         co_slice = slices[0]
         values, coords = co_slice.to_global(
-            masked=True, fill=np.nan, return_coordinates=True
+            masked=False, fill=np.nan, return_coordinates=True
         )
         values = np.asarray(values, dtype=float)
         self._co_times = np.asarray(co_slice.times, dtype=float)
@@ -134,6 +138,34 @@ class FDSGroundTruthEnvironment:
             raise ValueError(f"CO coordinate/data mismatch: {values.shape}")
         # factory_v1.fds and Smokeview identify this as mol/mol volume fraction.
         self._ground_truth_co_yx *= 1_000_000.0
+
+    def _load_co_npz(self, npz_path: str | Path) -> None:
+        """Load a portable ppm timeseries without requiring raw FDS outputs."""
+        with np.load(npz_path, allow_pickle=False) as data:
+            required = {"co_ppm", "times", "x_coordinates", "y_coordinates", "height"}
+            missing = required.difference(data.files)
+            if missing:
+                raise ValueError(f"CO NPZ missing keys: {sorted(missing)}")
+            values = np.asarray(data["co_ppm"], dtype=float)
+            times = np.asarray(data["times"], dtype=float)
+            x_coords = np.asarray(data["x_coordinates"], dtype=float)
+            y_coords = np.asarray(data["y_coordinates"], dtype=float)
+            height = float(data["height"])
+        expected = (times.size, y_coords.size, x_coords.size)
+        if values.shape != expected:
+            raise ValueError(f"CO NPZ shape={values.shape}, expected={expected}")
+        if (
+            times.ndim != 1 or times.size == 0 or np.any(np.diff(times) <= 0.0)
+            or x_coords.ndim != 1 or np.any(np.diff(x_coords) <= 0.0)
+            or y_coords.ndim != 1 or np.any(np.diff(y_coords) <= 0.0)
+            or not np.isfinite(height)
+        ):
+            raise ValueError("CO NPZ axes and height must be finite and increasing")
+        self._ground_truth_co_yx = values
+        self._co_times = times
+        self._co_x = x_coords
+        self._co_y = y_coords
+        self.co_height = height
 
     def _build_obstacle_volume(self) -> np.ndarray:
         shape = (

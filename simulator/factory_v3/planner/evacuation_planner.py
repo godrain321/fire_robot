@@ -36,9 +36,7 @@ class ExitSelectionConfig:
             if not isinstance(getattr(self, name), bool):
                 raise TypeError(f"{name} must be bool")
         expected = ("path_length_m", "accumulated_risk_cost", "exit_id")
-        actual = (
-            self.primary_key, self.secondary_key, self.final_tie_breaker,
-        )
+        actual = (self.primary_key, self.secondary_key, self.final_tie_breaker)
         if actual != expected:
             raise ValueError(f"unsupported exit selection order: {actual}")
         if self.float_tolerance <= 0:
@@ -94,7 +92,7 @@ class EvacuationPlanner:
     def plan(
         self, exits, start_position_world, *, cost_map,
         static_obstacle_map, dynamic_obstacle_map, estimated_fire_map,
-        created_at: float,
+        created_at: float, risk_first: bool = False,
     ) -> EvacuationPlan:
         exits = tuple(exits)
         start = (float(start_position_world[0]), float(start_position_world[1]))
@@ -135,15 +133,22 @@ class EvacuationPlanner:
             )
         else:
             candidates = accepted
+        primary = "accumulated_risk_cost" if risk_first else self.config.primary_key
+        secondary = "path_length_m" if risk_first else self.config.secondary_key
         candidates.sort(key=lambda item: (
-            bucket(item.path_length_m),
-            bucket(item.accumulated_risk_cost),
+            bucket(getattr(item, primary)),
+            bucket(getattr(item, secondary)),
             item.exit_id,
         ))
         selected = candidates[0]
         reason = (
-            "confirmed usable exits preferred; shortest cost-aware A* path; "
-            "ties resolved by accumulated risk cost then exit_id"
+            (
+                "confirmed usable exits preferred; lowest accumulated path risk; "
+                "ties resolved by path length then exit_id"
+                if risk_first else
+                "confirmed usable exits preferred; shortest cost-aware A* path; "
+                "ties resolved by accumulated risk cost then exit_id"
+            )
         )
         return EvacuationPlan(
             True, start, selected.exit_id, selected.exit_position_world,

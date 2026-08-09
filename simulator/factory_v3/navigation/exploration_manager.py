@@ -102,7 +102,10 @@ class ExplorationManager:
         unchecked_exits = world_state.get_unchecked_exits()
         unknown_exits = tuple(
             item for item in unchecked_exits
-            if item.status not in (ExitStatus.BLOCKED, ExitStatus.DANGEROUS)
+            if item.status not in (
+                ExitStatus.BLOCKED, ExitStatus.DANGEROUS,
+                ExitStatus.DANGER_EXPECTED,
+            )
         )
         if not unchecked_exits:
             return ExplorationPlan(

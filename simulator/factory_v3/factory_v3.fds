@@ -2,7 +2,7 @@
 
 &MESH IJK=141,112,15,
       XB=1.8,30.0,5.6,28.0,0.0,3.0 /
-&TIME T_END=700 /
+&TIME T_END=200 /
 &REAC FUEL='PROPANE', SOOT_YIELD=0.01, CO_YIELD=0.02,
       HEAT_OF_COMBUSTION=46460. /
 
@@ -13,7 +13,7 @@
 &SURF ID='EXIT_SOLID', COLOR='BLUE' /
 
 &CATF OTHER_FILES='generated/obstacles.inc','generated/exits.inc',
-      'generated/scenario.inc' /
+      'generated/scenario.inc','config/exit_blockers.inc' /
 
 &DUMP DT_SLCF=1.0, DT_SL3D=1.0 /
 &SLCF ID='TEMP_3D', XB=1.8,30.0,5.6,28.0,0.0,3.0,

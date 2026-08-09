@@ -13,8 +13,14 @@ import numpy as np
 import yaml
 
 from human_detection_sim import SimpleHumanDetector
-from mapping.fire_costmap import load_factory_geometry
+from mapping.fire_costmap import (
+    load_factory_geometry, obstacles_for_initial_robot_map,
+)
 from mapping.grid_map import GridMap
+from mapping.fire_localization import FireLocalizationConfig, FireLocalizer
+from mapping.dynamic_obstacle_mapping import (
+    DynamicObstacleMapper, DynamicObstacleMappingConfig,
+)
 from mapping.partial_costmap import (
     PartialCostmapConfig,
     PartialFireCostmap,
@@ -30,16 +36,25 @@ from navigation.evacuation_strategy_selector import (
 from navigation.travel_history import TravelHistory, TravelHistoryConfig
 from navigation.path_simplifier import PathSimplificationConfig, SafePathSimplifier
 from navigation.exit_switching import (
-    ExitSwitchingConfig, RouteCostTrendMonitor, current_direction_world,
+    DelayedCostSwitch, ExitSwitchingConfig, RouteCostTrendMonitor,
+    current_direction_world,
     evaluate_path_cost,
+)
+from navigation.event_replanning import (
+    EventReplanningConfig, EventReplanningPolicy, ReplanReason,
 )
 from navigation.exploration_manager import (
     ExplorationConfig, ExplorationManager, ExplorationPhase,
 )
+from navigation.initial_advance import InitialAdvanceConfig
 from navigation.victim_following import (
     FollowState, VictimFollowingConfig, VictimFollowingController,
     evacuation_success_ready,
 )
+from navigation.victim_scripted_motion import (
+    ScriptedVictimMotionConfig, ScriptedVictimMotionController,
+)
+from navigation.exit_blockage import ExitBlockageConfig, ExitBlockageEvaluator
 from planner.a_star import weighted_a_star_with_escape
 from planner.evacuation_planner import EvacuationPlanner, ExitSelectionConfig
 from planner.exit_evaluator import (
@@ -50,7 +65,7 @@ from sensors.mq135_sensor import MQ135Config, MQ135Sensor
 from sensors.thermal_camera import ThermalCameraMLX90640
 from simulation.ground_truth import FDSGroundTruthEnvironment
 from visualization.partial_costmap_viewers import (
-    MatplotlibThermalViewer,
+    MapOverlayConfig, MatplotlibThermalViewer, PerceptionMapDisplayConfig,
     PygameSimulationViewer,
     show_debug_costmaps,
 )
@@ -74,6 +89,7 @@ class SimulationMetrics:
     ground_truth_co: list[float] = field(default_factory=list)
     detected_victim: str | None = None
     selected_exit: str | None = None
+    actual_path_world: list[tuple[float, float]] = field(default_factory=list)
 
 
 def _finite_stats(values: list[float]) -> tuple[str, str]:
@@ -163,19 +179,23 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     config = PartialCostmapConfig(
         grid_resolution=args.grid_resolution,
         temperature_weight=args.temperature_weight,
+        temperature_power=args.temperature_power,
         co_weight=args.co_weight,
+        co_power=args.co_power,
         unknown_penalty=args.unknown_penalty,
         replan_interval_seconds=args.replan_interval,
         sensor_update_interval_seconds=args.sensor_interval,
         selected_fds_start_time=args.fds_start_time,
         simulation_dt=args.dt,
         robot_speed=args.robot_speed,
+        robot_angular_speed=math.radians(args.robot_angular_speed_deg),
+        render_fps=args.render_fps,
         gas_update_radius=args.gas_update_radius,
         use_inflation=not args.no_inflation,
         inflation_radius=args.inflation_radius,
     )
     ground_truth = FDSGroundTruthEnvironment(
-        args.fds_file, args.temperature_npz, args.fds_dir
+        args.fds_file, args.temperature_npz, args.fds_dir, args.co_npz
     )
     mission = MissionManager(
         victim_reached_distance_m=args.victim_approach_distance,
@@ -185,13 +205,61 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     )
     print(f"Mission state: {mission.current_state.name}")
     mesh_xb, obstacles, holes = load_factory_geometry(args.fds_file)
+    planner_obstacles = obstacles_for_initial_robot_map(
+        obstacles, args.scenario
+    )
     grid_map = GridMap(
-        mesh_xb, obstacles, holes, config.grid_resolution,
+        mesh_xb, planner_obstacles, holes, config.grid_resolution,
         config.inflation_radius if config.use_inflation else 0.0,
     )
     static_map = np.asarray(grid_map.occupancy, dtype=bool)
+    display_grid_map = GridMap(
+        mesh_xb, planner_obstacles, holes, config.grid_resolution, 0.0,
+        include_lower_obstacle_boundary=False,
+    )
+    display_static_map = np.asarray(display_grid_map.occupancy, dtype=bool)
     belief = PartialFireCostmap(grid_map, static_map, config)
     world = WorldState.from_scenario(args.scenario, grid_map, config)
+    world.set_known_occupancy_map(display_static_map)
+    fire_localizer = FireLocalizer(
+        world.map_metadata,
+        world.static_obstacle_map,
+        FireLocalizationConfig.from_mapping(args.fire_localization_config),
+    )
+    dynamic_mapping_config = DynamicObstacleMappingConfig.from_mapping(
+        args.dynamic_obstacle_mapping_config
+    )
+    obstacle_by_id = {
+        item.get("id"): item for item in obstacles if item.get("id")
+    }
+    missing_ignored_meshes = sorted(
+        set(dynamic_mapping_config.ignored_fds_obstacle_ids) - obstacle_by_id.keys()
+    )
+    if missing_ignored_meshes:
+        raise ValueError(
+            "unknown ignored FDS obstacle IDs: "
+            f"{missing_ignored_meshes}"
+        )
+    ignored_fds_bounds = tuple(
+        obstacle_by_id[obstacle_id]["xb"]
+        for obstacle_id in dynamic_mapping_config.ignored_fds_obstacle_ids
+    )
+    dynamic_obstacle_mapper = DynamicObstacleMapper(
+        world.map_metadata, world.known_occupancy_map, dynamic_mapping_config,
+        ignored_fds_bounds_world=ignored_fds_bounds,
+    )
+    if config.use_inflation and not math.isclose(
+        dynamic_mapping_config.obstacle_inflation_radius_m,
+        config.inflation_radius,
+        abs_tol=1e-9,
+    ):
+        raise ValueError(
+            "dynamic obstacle inflation must match planner inflation radius"
+        )
+    exit_blockage_evaluator = ExitBlockageEvaluator(
+        world.map_metadata,
+        ExitBlockageConfig.from_mapping(args.exit_blockage_config),
+    )
     # Existing detector and viewer APIs remain dictionary-based adapters.
     args.humans = world.legacy_humans()
     args.exits = world.legacy_exits()
@@ -233,10 +301,21 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         args.exit_switching_config
     )
     route_cost_monitor = RouteCostTrendMonitor(exit_switching_config)
+    delayed_cost_switch = DelayedCostSwitch(
+        exit_switching_config.additional_travel_before_switch_m
+    )
     path_validation_config = PathValidationConfig.from_mapping(
         args.path_validation_config
     )
-    replanning_config = ReplanningConfig.from_mapping(args.replanning_config)
+    event_replanning_config = EventReplanningConfig.from_mapping(
+        args.replanning_config
+    )
+    legacy_replanning_keys = {
+        key: value for key, value in args.replanning_config.items()
+        if key in ReplanningConfig.__dataclass_fields__
+    }
+    replanning_config = ReplanningConfig.from_mapping(legacy_replanning_keys)
+    event_replanning = EventReplanningPolicy(event_replanning_config)
     path_simplifier = SafePathSimplifier(
         world.map_metadata,
         PathSimplificationConfig.from_mapping(args.path_simplification_config),
@@ -247,6 +326,23 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     victim_follower = VictimFollowingController(
         world.map_metadata, following_config
     )
+    scripted_victim_motions = {}
+    for human in args.scenario.get("humans", []):
+        motion_config = ScriptedVictimMotionConfig.from_mapping(
+            human.get("scripted_motion")
+        )
+        if not motion_config.enabled:
+            continue
+        controller = ScriptedVictimMotionController(
+            world.map_metadata, human["id"], (human["x"], human["y"]),
+            motion_config,
+        )
+        for index, waypoint in enumerate(motion_config.waypoints_world):
+            _validate_free_point(
+                f"human {human['id']} scripted waypoint {index}",
+                waypoint, grid_map,
+            )
+        scripted_victim_motions[human["id"]] = controller
     world.attach_victim_following(victim_follower)
     world.attach_travel_history(travel_history)
     world.set_initial_robot_pose(args.start, math.radians(args.start_theta))
@@ -286,7 +382,9 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     ))
 
     metrics = SimulationMetrics()
-    human_detector = SimpleHumanDetector(args.human_detection_range)
+    human_detector = SimpleHumanDetector(
+        args.human_detection_range, args.human_detection_fov_deg
+    )
     active_victim = None
     victim_reached = False
     selected_exit = None
@@ -294,7 +392,8 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     returning_to_entrance = False
     blocked_return_grid = None
     detected_ids: set[str] = set()
-    trajectory = [(state.x, state.y)]
+    trajectory = metrics.actual_path_world
+    trajectory.append((state.x, state.y))
     latest_thermal = np.full((24, 32), 25.0)
     latest_co_text = "unknown"
     sim_elapsed = 0.0
@@ -307,6 +406,10 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     latest_newly_observed_cells: set[tuple[int, int]] = set()
     last_replan_reason = "none"
     last_route_environment_revision = world.environment_revision
+    event_replanning.mark_reevaluation_complete(
+        elapsed_time=sim_elapsed, robot_pose=(state.x, state.y),
+        costmap_revision=belief.revision,
+    )
 
     def begin_victim_following(victim) -> None:
         """Start from real poses only after a validated route is active."""
@@ -365,10 +468,11 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         )
         return result
 
-    def activate_replacement_route(replacement) -> bool:
+    def activate_replacement_route(replacement, *, switch_reason=None) -> bool:
         """Activate a Stage-6 replacement only after Stage-7 validation."""
         nonlocal goal, no_path_active, returning_to_entrance
         nonlocal selected_exit, status
+        previous_selected_exit = selected_exit
         goal = replacement.target_position_world
         simplified = activate_simplified_path(
             replacement.path_grid, goal_world=goal
@@ -416,6 +520,13 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             metrics.selected_exit = selected_exit
             returning_to_entrance = False
             status = f"EVACUATING VIA {selected_exit}"
+            if switch_reason is not None:
+                world.mark_replaced_unknown_exit_danger_expected(
+                    previous_exit_id=previous_selected_exit,
+                    new_exit_id=selected_exit,
+                    reason=str(switch_reason),
+                    sim_time=sim_elapsed,
+                )
         initial_cost = evaluate_path_cost(
             simplified.simplified_path_grid, belief.final_cost_map
         )
@@ -497,12 +608,55 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         no_path_active = False
         return True
 
-    if exploration_config.enabled:
+    # Move physically from the configured pose before the first A* request.
+    # This is a one-shot startup phase; resumed exploration always replans
+    # directly from the robot's then-current pose without another advance.
+    initial_advance = InitialAdvanceConfig.from_robot_motion(
+        args.scenario.get("robot_motion")
+    )
+    initial_advance_pending = initial_advance.distance_m > 0.0
+    initial_advance_goal = initial_advance.target_world(
+        (state.x, state.y), state.theta
+    )
+    if initial_advance_pending:
+        start_grid = grid_map.world_to_grid(state.x, state.y)
+        advance_grid = grid_map.world_to_grid(*initial_advance_goal)
+        advance_validation = path_simplifier.evaluate_segment(
+            start_grid, advance_grid,
+            costmap=belief.final_cost_map,
+            static_obstacle_map=belief.static_obstacle_map,
+            dynamic_obstacle_map=world.dynamic_obstacle_mask(),
+            estimated_fire_map=world.estimated_fire_map,
+        )
+        if not advance_validation.safe:
+            reasons = ",".join(
+                item.value for item in advance_validation.rejection_reasons
+            )
+            raise ValueError(
+                f"initial {initial_advance.distance_m:.3f} m forward motion "
+                f"is unsafe: {reasons}"
+            )
+        follower.set_path(
+            (start_grid, advance_grid), goal_world=initial_advance_goal,
+            world_path=((state.x, state.y), initial_advance_goal),
+        )
+        goal = initial_advance_goal
+        status = "INITIAL_FORWARD_ADVANCE"
+    elif exploration_config.enabled:
         start_or_resume_exploration(ExplorationPhase.INITIAL)
     pygame_viewer = None
     thermal_viewer = None
     if not args.headless:
-        pygame_viewer = PygameSimulationViewer(grid_map, config)
+        pygame_viewer = PygameSimulationViewer(
+            grid_map, config,
+            display_static_obstacle_map=display_static_map,
+            perception_display_config=PerceptionMapDisplayConfig.from_mapping(
+                args.perception_map_display_config
+            ),
+            overlay_config=MapOverlayConfig.from_mapping(
+                args.map_overlays_config
+            ),
+        )
         if not args.no_thermal_window:
             try:
                 thermal_viewer = MatplotlibThermalViewer()
@@ -524,6 +678,16 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                 continue
         fds_time = config.selected_fds_start_time + sim_elapsed
         world.set_simulation_time(sim_elapsed)
+        if (
+            initial_advance_pending
+            and follower.waypoint_index >= len(follower.world_path)
+        ):
+            initial_advance_pending = False
+            follower.clear()
+            goal = (state.x, state.y)
+            status = "INITIAL_FORWARD_ADVANCE_COMPLETE"
+            if exploration_config.enabled:
+                start_or_resume_exploration(ExplorationPhase.INITIAL)
         newly_blocked = set()
         sensor_due = sim_elapsed - last_sensor_time >= config.sensor_update_interval_seconds - 1e-9
         if sensor_due:
@@ -531,9 +695,25 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             latest_thermal, rays, _ = ground_truth.capture_thermal(
                 thermal_camera, state, fds_time
             )
+            if dynamic_mapping_config.enabled:
+                dynamic_obstacle_mapper.process_thermal_rays(
+                    f"obstacle:{sim_elapsed:.9f}", rays,
+                    simulation_time=sim_elapsed, world_state=world,
+                )
+            dynamic_update = belief.update_dynamic_obstacles(
+                world.dynamic_obstacle_mask(),
+                inflation_radius_m=(
+                    dynamic_mapping_config.obstacle_inflation_radius_m
+                ),
+            )
             thermal_update = belief.update_thermal_observations(
                 latest_thermal, rays, fds_time
             )
+            if fire_localizer.config.enabled:
+                fire_localizer.add_thermal_observation(
+                    f"thermal:{sim_elapsed:.9f}", sim_elapsed,
+                    (state.x, state.y, state.theta), rays,
+                )
             gas = ground_truth.measure_co(
                 gas_sensor, state, fds_time,
                 config.sensor_update_interval_seconds,
@@ -543,15 +723,79 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     state.x, state.y, gas.reading.measured_ppm, fds_time
                 )
                 latest_co_text = f"{gas.reading.measured_ppm:.1f} ppm"
+                if fire_localizer.config.enabled:
+                    thermal_values = np.asarray(latest_thermal, dtype=float)
+                    center_start = thermal_values.shape[1] // 3
+                    center_end = thermal_values.shape[1] - center_start
+                    finite_thermal = thermal_values[:, center_start:center_end]
+                    finite_thermal = finite_thermal[np.isfinite(finite_thermal)]
+                    local_temperature = (
+                        float(finite_thermal.max()) if finite_thermal.size else 25.0
+                    )
+                    fire_localizer.add_co_observation(
+                        f"co:{sim_elapsed:.9f}", sim_elapsed,
+                        (state.x, state.y, state.theta),
+                        gas.reading.measured_ppm, local_temperature,
+                        thermal_direction_supported=any(
+                            ray.valid
+                            and center_start <= ray.col < center_end
+                            and math.isfinite(float(ray.pixel_temperature))
+                            and float(ray.pixel_temperature)
+                            >= fire_localizer.config.thermal_warning_threshold_c
+                            for ray in rays
+                        ),
+                    )
             else:
                 from mapping.partial_costmap import BeliefUpdate
                 co_update = BeliefUpdate(frozenset(), frozenset())
                 latest_co_text = "invalid"
+            if fire_localizer.config.enabled:
+                localization_update = belief.update_estimated_fire_probability(
+                    fire_localizer.fire_probability,
+                    cost_weight=fire_localizer.config.estimated_fire_cost_weight,
+                    minimum_probability=(
+                        fire_localizer.config.possible_probability_threshold
+                    ),
+                )
+            else:
+                from mapping.partial_costmap import BeliefUpdate
+                localization_update = BeliefUpdate(frozenset(), frozenset())
             _, newly_blocked = _combine_updates(
-                thermal_update, co_update
+                thermal_update, co_update, localization_update, dynamic_update
             )
             world.estimated_fire_map.sync_from_belief(belief)
+            world.estimated_fire_map.sync_fire_localization(fire_localizer)
+            world.fire_localization_result = fire_localizer.latest_result
             world.update_costmap_revision(belief.revision)
+            if (
+                exit_blockage_evaluator.config.enabled
+                and dynamic_update.changed_cells
+            ):
+                for exit_item in world.exits.values():
+                    blockage = exit_blockage_evaluator.evaluate(
+                        exit_item, (state.x, state.y),
+                        cost_map=belief.final_cost_map,
+                        static_obstacle_map=world.known_occupancy_map,
+                        dynamic_inflated_map=(
+                            belief.dynamic_inflated_obstacle_map
+                        ),
+                        active_obstacles=world.get_active_dynamic_obstacles(),
+                        evaluated_at=sim_elapsed,
+                        environment_revision=world.environment_revision,
+                    )
+                    world.record_exit_blockage_result(blockage)
+                    if blockage.blocked_confirmed and exit_item.status is not ExitStatus.BLOCKED:
+                        world.update_exit_status(
+                            exit_item.exit_id, ExitStatus.BLOCKED,
+                            sim_time=sim_elapsed, reason=blockage.reason,
+                        )
+                        if exit_item.exit_id in {
+                            selected_exit, world.current_target_exit_id,
+                            world.current_exploration_target_exit_id,
+                        }:
+                            world.last_perception_replan_reason = (
+                                f"current exit {exit_item.exit_id} blocked by perceived obstacle"
+                            )
             # Capture hazard knowledge at observation time so later normal
             # readings do not erase evidence seen earlier in the mission.
             world.hazard_knowledge_decision = hazard_tracker.evaluate(
@@ -592,12 +836,33 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                         baseline=trend.baseline_average_cost,
                         consecutive=trend.consecutive_increases,
                     )
+                active_target_exit = (
+                    selected_exit or active_decision.target_exit_id
+                )
+                if (
+                    delayed_cost_switch.active
+                    and delayed_cost_switch.exit_id != active_target_exit
+                ):
+                    delayed_cost_switch.clear()
                 if (
                     trend.switch_required
+                    and not delayed_cost_switch.active
+                    and active_target_exit is not None
                     and not world.exit_switch_is_cooling_down(sim_elapsed)
                 ):
-                    reason = trend.reason
-                    previous_exit = active_decision.target_exit_id
+                    delayed_cost_switch.arm(
+                        active_target_exit, trend.reason,
+                        metrics.travelled_distance,
+                    )
+                if (
+                    delayed_cost_switch.ready(metrics.travelled_distance)
+                    and not world.exit_switch_is_cooling_down(sim_elapsed)
+                ):
+                    reason = delayed_cost_switch.reason
+                    # ``selected_exit`` is the route the controller was
+                    # actually following. The decision object is only a
+                    # fallback for older/restored route state.
+                    previous_exit = delayed_cost_switch.exit_id
                     next_waypoint = (
                         follower.world_path[follower.waypoint_index]
                         if follower.waypoint_index < len(follower.world_path)
@@ -659,8 +924,10 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                             and replacement_cost[1]
                             < trend.current_average_cost - 1e-12
                         )
-                        if improves and activate_replacement_route(replacement):
-                            world.record_exit_switch(
+                        if improves and activate_replacement_route(
+                            replacement, switch_reason=reason
+                        ):
+                            world.record_cost_driven_exit_switch(
                                 previous_exit_id=previous_exit,
                                 new_exit_id=replacement.target_exit_id,
                                 reason=reason, sim_time=sim_elapsed,
@@ -669,7 +936,9 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                                 ),
                                 validation_result="validated",
                             )
+                            delayed_cost_switch.clear()
                         else:
+                            delayed_cost_switch.clear()
                             mission.handle_event(
                                 MissionEvent.NO_SAFE_ROUTE_FOUND,
                                 sim_time=sim_elapsed,
@@ -758,7 +1027,9 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                         )
                         world.hazard_knowledge_decision = replacement.hazard_knowledge
                         if replacement.success:
-                            activate_replacement_route(replacement)
+                            activate_replacement_route(
+                                replacement, switch_reason=invalid_reason
+                            )
                         else:
                             mission.handle_event(
                                 MissionEvent.NO_SAFE_ROUTE_FOUND,
@@ -796,10 +1067,22 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     dynamic_obstacle_map=world.dynamic_obstacle_mask(),
                     estimated_fire_map=world.estimated_fire_map,
                 )
-                valid = route_validation.safe
+                target_blocked = (
+                    world.active_route_decision.target_exit_id is not None
+                    and world.get_exit(
+                        world.active_route_decision.target_exit_id
+                    ).status in (
+                        ExitStatus.BLOCKED, ExitStatus.DANGEROUS,
+                        ExitStatus.DANGER_EXPECTED,
+                    )
+                )
+                valid = route_validation.safe and not target_blocked
                 blocked_grid = route_validation.first_rejected_cell
                 invalid_reason = (
-                    None if valid else route_validation.rejection_reasons[0].value
+                    None if valid else (
+                        "current_exit_blocked_or_dangerous" if target_blocked else
+                        route_validation.rejection_reasons[0].value
+                    )
                 )
                 world.record_route_validation(
                     sim_time=sim_elapsed, costmap_revision=belief.revision
@@ -843,9 +1126,15 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                                 cost_map=belief.final_cost_map,
                                 costmap_revision=belief.revision,
                                 created_at=sim_elapsed,
+                                risk_first=(
+                                    invalid_reason
+                                    == "current_exit_blocked_or_dangerous"
+                                ),
                             )
                         if replacement.success:
-                            activate_replacement_route(replacement)
+                            activate_replacement_route(
+                                replacement, switch_reason=invalid_reason
+                            )
                         else:
                             mission.handle_event(
                                 MissionEvent.NO_SAFE_ROUTE_FOUND,
@@ -882,13 +1171,26 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                         estimated_fire_map=world.estimated_fire_map,
                     )
                     last_route_environment_revision = world.environment_revision
-                    if not search_validation.safe:
+                    exploration_target_blocked = (
+                        world.active_exploration_plan is not None
+                        and world.get_exit(
+                            world.active_exploration_plan.target_exit_id
+                        ).status in (
+                            ExitStatus.BLOCKED, ExitStatus.DANGEROUS,
+                            ExitStatus.DANGER_EXPECTED,
+                        )
+                    )
+                    if not search_validation.safe or exploration_target_blocked:
                         was_exploring = world.active_exploration_plan is not None
                         follower.clear()
                         blocked_return_grid = search_validation.first_rejected_cell
                         status = (
                             "SEARCH_PATH_INVALIDATED: "
-                            + search_validation.rejection_reasons[0].value
+                            + (
+                                "current_exit_blocked"
+                                if exploration_target_blocked else
+                                search_validation.rejection_reasons[0].value
+                            )
                         )
                         no_path_active = True
                         world.clear_path_simplification()
@@ -913,9 +1215,55 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             if thermal_viewer is not None:
                 thermal_viewer.update(latest_thermal, fds_time)
 
+        for victim_id, controller in scripted_victim_motions.items():
+            victim = world.get_victim(victim_id)
+            if (
+                active_victim is not None
+                and active_victim["id"] == victim_id
+                and not victim_reached
+                and victim.status in (
+                    VictimStatus.DETECTED, VictimStatus.APPROACHING,
+                )
+            ):
+                controller.move_toward(
+                    (state.x, state.y), dt=config.simulation_dt,
+                    stop_distance_m=args.victim_approach_distance,
+                    static_obstacle_map=world.static_obstacle_map,
+                    dynamic_obstacle_map=world.dynamic_obstacle_mask(),
+                )
+                world.update_victim_position(
+                    victim_id, controller.position_world
+                )
+                continue
+            if (
+                controller.completed
+                or (
+                    controller.config.stop_when_detected
+                    and victim.status is not VictimStatus.UNDETECTED
+                )
+            ):
+                continue
+            controller.update(
+                dt=config.simulation_dt,
+                static_obstacle_map=world.static_obstacle_map,
+                dynamic_obstacle_map=world.dynamic_obstacle_mask(),
+            )
+            world.update_victim_position(victim_id, controller.position_world)
+        args.humans = world.legacy_humans()
+
+        if active_victim is not None and not victim_reached:
+            current_victim = world.get_victim(active_victim["id"])
+            active_victim["x"], active_victim["y"] = (
+                current_victim.position_world
+            )
+            active_victim["distance"] = math.dist(
+                (state.x, state.y), current_victim.position_world
+            )
+
         detections = human_detector.detect(
             robot_position=(state.x, state.y),
             humans=args.humans,
+            robot_heading_rad=state.theta,
             obstacle_map=static_map,
             map_origin=(grid_map.x_min, grid_map.y_min),
             map_resolution=grid_map.resolution,
@@ -1014,10 +1362,6 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     EvacuationStrategy.NEAREST_REACHABLE_EXIT,
                 ):
                     evacuation_plan = route_decision.evacuation_plan
-                    selected = (
-                        None if evacuation_plan is None
-                        else evacuation_plan.selected_evaluation
-                    )
                     selected_exit = route_decision.target_exit_id
                     metrics.selected_exit = selected_exit
                     goal = route_decision.target_position_world
@@ -1027,21 +1371,6 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                         selection_reason=route_decision.reasons[0],
                         sim_time=sim_elapsed,
                     )
-                    if (
-                        selected is not None
-                        and selected.unknown_ratio is not None
-                        and selected.unknown_ratio
-                        <= exit_evaluator.config.usable_confirmation_max_unknown_ratio
-                    ):
-                        world.update_exit_status(
-                            selected_exit, ExitStatus.USABLE,
-                            sim_time=sim_elapsed,
-                            temperature_c=selected.exit_temperature_c
-                            if selected.exit_temperature_c is not None else np.nan,
-                            co_ppm=selected.exit_co_ppm
-                            if selected.exit_co_ppm is not None else np.nan,
-                            path_cost=selected.accumulated_risk_cost,
-                        )
                     simplified = activate_simplified_path(
                         route_decision.path_grid, goal_world=goal
                     )
@@ -1148,18 +1477,68 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             replan_reason = None
         elif not remaining_path:
             replan_reason = "initial_or_missing_path"
-        elif path_has_new_block(remaining_path, newly_blocked):
-            replan_reason = "new_risk_on_path"
-        elif world.active_route_decision is not None and world.active_route_valid:
-            # Stage-6 routes are revalidated on explicit belief/environment
-            # revisions. Do not replace them with unrelated periodic A* runs.
-            replan_reason = None
-        elif sim_elapsed - last_replan_time >= config.replan_interval_seconds - 1e-9:
-            replan_reason = "periodic"
-        elif config.replan_distance > 0.0 and math.hypot(
-            state.x - last_replan_position[0], state.y - last_replan_position[1]
-        ) >= config.replan_distance:
-            replan_reason = "distance"
+        else:
+            active_victim_item = (
+                None if world.active_following_victim_id is None else
+                world.get_victim(world.active_following_victim_id)
+            )
+            replan_decision = event_replanning.evaluate(
+                current_path=remaining_path,
+                current_costmap=belief.final_cost_map,
+                costmap_revision=belief.revision,
+                dynamic_obstacle_map=world.dynamic_obstacle_mask(),
+                temperature_map=belief.temperature_belief_map,
+                co_map=belief.co_belief_map,
+                temperature_observed_mask=belief.temperature_observed_mask,
+                co_observed_mask=belief.co_observed_mask,
+                exit_statuses={
+                    exit_id: item.status for exit_id, item in world.exits.items()
+                },
+                current_exit_id=selected_exit,
+                robot_pose=(state.x, state.y), elapsed_time=sim_elapsed,
+                victim_follow_active=victim_follower.active,
+                victim_follow_distance_m=(
+                    None if active_victim_item is None else
+                    active_victim_item.follow_distance_m
+                ),
+                victim_progress_stalled=(
+                    victim_follower.state is FollowState.FOLLOW_FAILED
+                ),
+            )
+            if replan_decision.required:
+                world.record_replan_decision(
+                    replan_decision, costmap_revision=belief.revision,
+                    sim_time=sim_elapsed, robot_pose_world=(state.x, state.y),
+                    selected_exit_id=selected_exit,
+                )
+                if replan_decision.reason in (
+                    ReplanReason.PERIODIC_REEVALUATION,
+                    ReplanReason.DISTANCE_REEVALUATION,
+                ):
+                    # A general reevaluation first validates the current path.
+                    # A* and controller replacement are unnecessary when it is
+                    # still safe and the target exit remains valid.
+                    if remaining_route_is_safe() and (
+                        selected_exit is None
+                        or world.get_exit(selected_exit).status not in (
+                            ExitStatus.BLOCKED, ExitStatus.DANGEROUS,
+                            ExitStatus.DANGER_EXPECTED,
+                        )
+                    ):
+                        event_replanning.mark_reevaluation_complete(
+                            elapsed_time=sim_elapsed,
+                            robot_pose=(state.x, state.y),
+                            costmap_revision=belief.revision,
+                        )
+                    else:
+                        replan_reason = replan_decision.reason.value
+                elif replan_decision.reason is ReplanReason.VICTIM_FOLLOW_FAILURE:
+                    # FOLLOW_WAIT owns ordinary lag recovery. Only a confirmed
+                    # following failure proceeds to route replanning.
+                    if victim_follower.state is FollowState.FOLLOW_FAILED:
+                        replan_reason = replan_decision.reason.value
+                elif world.active_route_decision is None:
+                    replan_reason = replan_decision.reason.value
 
         if replan_reason is not None:
             if mission.current_state is MissionState.REPLAN:
@@ -1184,6 +1563,12 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             last_replan_reason = replan_reason
             last_replan_time = sim_elapsed
             last_replan_position = (state.x, state.y)
+            if replan_reason != "initial_or_missing_path":
+                event_replanning.mark_processed(
+                    replan_decision, costmap_revision=belief.revision,
+                    elapsed_time=sim_elapsed, robot_pose=(state.x, state.y),
+                    selected_exit_id=selected_exit,
+                )
             if result.path:
                 simplified = activate_simplified_path(
                     result.path, escape_path=result.escape_path,
@@ -1238,8 +1623,8 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                 state, config.simulation_dt, belief.final_cost_map
             )
         metrics.travelled_distance += moved
-        trajectory.append((state.x, state.y))
         if moved > 0.0:
+            trajectory.append((state.x, state.y))
             world.record_robot_position(
                 (state.x, state.y), sim_time=sim_elapsed,
                 is_returning=(returning_by_history or returning_to_entrance),
@@ -1370,6 +1755,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             elif reasons & {
                 ExitRejectionReason.TEMPERATURE_LIMIT_EXCEEDED,
                 ExitRejectionReason.CO_LIMIT_EXCEEDED,
+                ExitRejectionReason.PATH_RISK_COST_EXCEEDED,
             }:
                 checked_status = ExitStatus.DANGEROUS
                 checked_reason = ",".join(sorted(item.value for item in reasons))
@@ -1441,6 +1827,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                 elif arrival_reasons & {
                     ExitRejectionReason.TEMPERATURE_LIMIT_EXCEEDED,
                     ExitRejectionReason.CO_LIMIT_EXCEEDED,
+                    ExitRejectionReason.PATH_RISK_COST_EXCEEDED,
                 }:
                     world.update_exit_status(
                         selected_exit, ExitStatus.DANGEROUS,
@@ -1553,6 +1940,10 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     selected_exit,
                     world.active_path_simplification,
                     victim_follower,
+                    world.fire_localization_result,
+                    exit_states={
+                        key: item.status for key, item in world.exits.items()
+                    },
                 )
                 pygame_viewer.close()
             if thermal_viewer is not None:
@@ -1586,6 +1977,10 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                 selected_exit,
                 world.active_path_simplification,
                 victim_follower,
+                world.fire_localization_result,
+                exit_states={
+                    key: item.status for key, item in world.exits.items()
+                },
             )
         sim_elapsed += config.simulation_dt
 
@@ -1626,6 +2021,64 @@ def print_summary(success, metrics, belief, elapsed):
     print(f"A* average time: {average:.6f} s")
 
 
+def export_actual_path(metrics, yaml_path, image_path, *, elapsed):
+    """Export only poses reached through physical translation, in world (x,y)."""
+    points = tuple(metrics.actual_path_world)
+    if not points:
+        raise ValueError("actual robot path is empty")
+    yaml_path = Path(yaml_path)
+    image_path = Path(image_path)
+    yaml_path.parent.mkdir(parents=True, exist_ok=True)
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "coordinate_frame": "factory_v3_world_xy_m",
+        "point_order": "x_y",
+        "simulation_time_s": round(float(elapsed), 6),
+        "travelled_distance_m": round(float(metrics.travelled_distance), 6),
+        "points": [
+            {"x": round(float(x), 6), "y": round(float(y), 6)}
+            for x, y in points
+        ],
+    }
+    yaml_path.write_text(
+        yaml.safe_dump(payload, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+
+    import pygame
+
+    width, height, margin = 1000, 760, 55
+    surface = pygame.Surface((width, height))
+    surface.fill((250, 250, 250))
+    xs = [item[0] for item in points]
+    ys = [item[1] for item in points]
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+    span_x = max(max_x - min_x, 1.0)
+    span_y = max(max_y - min_y, 1.0)
+    scale = min(
+        (width - 2 * margin) / span_x,
+        (height - 2 * margin) / span_y,
+    )
+
+    def screen_point(point):
+        return (
+            int(margin + (point[0] - min_x) * scale),
+            int(height - margin - (point[1] - min_y) * scale),
+        )
+
+    pygame.draw.rect(
+        surface, (190, 190, 190),
+        (margin, margin, width - 2 * margin, height - 2 * margin), 2,
+    )
+    rendered = [screen_point(item) for item in points]
+    if len(rendered) >= 2:
+        pygame.draw.lines(surface, (35, 105, 210), False, rendered, 4)
+    pygame.draw.circle(surface, (35, 175, 75), rendered[0], 9)
+    pygame.draw.circle(surface, (220, 55, 55), rendered[-1], 9)
+    pygame.image.save(surface, str(image_path))
+
+
 def parse_args():
     base = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(description=__doc__)
@@ -1636,18 +2089,26 @@ def parse_args():
         "--temperature-npz", type=Path,
         default=base / "processed/fds_temperature_3d_timeseries.npz",
     )
+    parser.add_argument(
+        "--co-npz", type=Path,
+        default=base / "processed/fds_co_2d_timeseries.npz",
+    )
     parser.add_argument("--start", type=float, nargs=2, default=None)
     parser.add_argument("--start-theta", type=float, default=None)
     parser.add_argument("--grid-resolution", type=float, default=None)
-    parser.add_argument("--fds-start-time", type=float, default=0.0)
+    parser.add_argument("--fds-start-time", type=float, default=None)
     parser.add_argument("--max-time", type=float, default=90.0)
     parser.add_argument("--dt", type=float, default=0.1)
     parser.add_argument("--sensor-interval", type=float, default=0.25)
     parser.add_argument("--replan-interval", type=float, default=1.0)
-    parser.add_argument("--robot-speed", type=float, default=0.45)
+    parser.add_argument("--robot-speed", type=float, default=1.3)
+    parser.add_argument("--robot-angular-speed-deg", type=float, default=None)
+    parser.add_argument("--render-fps", type=int, default=None)
     parser.add_argument("--unknown-penalty", type=float, default=2.0)
-    parser.add_argument("--temperature-weight", type=float, default=8.0)
-    parser.add_argument("--co-weight", type=float, default=8.0)
+    parser.add_argument("--temperature-weight", type=float, default=None)
+    parser.add_argument("--temperature-power", type=float, default=None)
+    parser.add_argument("--co-weight", type=float, default=None)
+    parser.add_argument("--co-power", type=float, default=None)
     parser.add_argument("--gas-update-radius", type=float, default=0.0)
     parser.add_argument("--inflation-radius", type=float, default=None)
     parser.add_argument("--no-inflation", action="store_true")
@@ -1662,6 +2123,14 @@ def parse_args():
     parser.add_argument(
         "--debug-costmap-plots", action="store_true",
         help="show static Matplotlib cost-layer plots after the run",
+    )
+    parser.add_argument(
+        "--actual-path-yaml", type=Path, default=None,
+        help="write the physically traversed world-coordinate path as YAML",
+    )
+    parser.add_argument(
+        "--actual-path-image", type=Path, default=None,
+        help="write a simple PNG visualization of the physically traversed path",
     )
     return parser.parse_args()
 
@@ -1678,6 +2147,11 @@ def apply_scenario_config(args):
         if args.temperature_npz != Path(__file__).resolve().parent / "processed/fds_temperature_3d_timeseries.npz"
         else base / scenario["temperature_npz"]
     )
+    args.co_npz = (
+        args.co_npz
+        if args.co_npz != Path(__file__).resolve().parent / "processed/fds_co_2d_timeseries.npz"
+        else base / scenario["co_npz"]
+    )
     args.start = tuple(args.start or _point(scenario["robot_start"]))
     args.start_theta = (
         float(scenario["robot_start"]["yaw_deg"])
@@ -1686,13 +2160,51 @@ def apply_scenario_config(args):
     args.grid_resolution = float(
         args.grid_resolution or scenario["planner"]["grid_resolution_m"]
     )
+    args.fds_start_time = float(
+        scenario.get("fds_start_time_s", 0.0)
+        if args.fds_start_time is None else args.fds_start_time
+    )
+    if not math.isfinite(args.fds_start_time) or args.fds_start_time < 0.0:
+        raise ValueError("fds_start_time_s must be finite and non-negative")
     args.inflation_radius = float(
         scenario["planner"]["inflation_radius_m"]
         if args.inflation_radius is None else args.inflation_radius
     )
+    motion_config = scenario.get("robot_motion", {})
+    if args.robot_angular_speed_deg is None:
+        args.robot_angular_speed_deg = float(
+            motion_config.get("angular_speed_deg_s", 120.0)
+        )
+    if args.robot_speed == 1.3:
+        args.robot_speed = float(motion_config.get("linear_speed_mps", 1.3))
+    display_config = scenario.get("display", {})
+    if args.render_fps is None:
+        args.render_fps = int(display_config.get("render_fps", 30))
+    sensor_costmap = scenario.get("sensor_costmap", {})
+    if not isinstance(sensor_costmap, dict):
+        raise ValueError("sensor_costmap must be a mapping")
+    cost_defaults = {
+        "temperature_weight": 8.0,
+        "temperature_power": 2.0,
+        "co_weight": 8.0,
+        "co_power": 2.0,
+    }
+    for name, default in cost_defaults.items():
+        if getattr(args, name) is None:
+            setattr(args, name, float(sensor_costmap.get(name, default)))
+        value = getattr(args, name)
+        if not math.isfinite(value) or value < 0.0:
+            raise ValueError(f"{name} must be finite and non-negative")
+    if args.robot_angular_speed_deg <= 0.0:
+        raise ValueError("robot angular speed must be positive")
+    if args.render_fps < 1:
+        raise ValueError("render FPS must be a positive integer")
     args.humans = list(scenario["humans"])
     args.exits = list(scenario["exits"])
     args.human_detection_range = float(scenario["human_detection_range_m"])
+    args.human_detection_fov_deg = float(
+        scenario["human_detection_horizontal_fov_deg"]
+    )
     args.victim_approach_distance = float(scenario["victim_approach_distance_m"])
     mission_config = scenario.get("mission", {})
     args.exit_reached_distance = float(
@@ -1716,6 +2228,15 @@ def apply_scenario_config(args):
     args.replanning_config = scenario.get("replanning", {})
     args.path_simplification_config = scenario.get("path_simplification", {})
     args.victim_following_config = scenario.get("victim_following", {})
+    args.fire_localization_config = scenario.get("fire_localization", {})
+    args.dynamic_obstacle_mapping_config = scenario.get(
+        "dynamic_obstacle_mapping", {}
+    )
+    args.exit_blockage_config = scenario.get("exit_blockage", {})
+    args.perception_map_display_config = scenario.get(
+        "perception_map_display", {}
+    )
+    args.map_overlays_config = scenario.get("map_overlays", {})
     return args
 
 
@@ -1723,6 +2244,15 @@ def main() -> int:
     args = apply_scenario_config(parse_args())
     success, metrics, belief, elapsed = run_simulation(args)
     print_summary(success, metrics, belief, elapsed)
+    if (args.actual_path_yaml is None) != (args.actual_path_image is None):
+        raise ValueError(
+            "--actual-path-yaml and --actual-path-image must be provided together"
+        )
+    if args.actual_path_yaml is not None:
+        export_actual_path(
+            metrics, args.actual_path_yaml, args.actual_path_image,
+            elapsed=elapsed,
+        )
     if args.debug_costmap_plots:
         show_debug_costmaps(belief)
     return 0 if success else 2

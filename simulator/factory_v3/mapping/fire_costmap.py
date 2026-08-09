@@ -137,6 +137,13 @@ def _parse_numbers(body: str, key: str, count: int) -> list[float] | None:
     return [float(value) for value in numbers[:count]]
 
 
+def _parse_string(body: str, key: str) -> str | None:
+    match = re.search(
+        rf"\b{key}\s*=\s*['\"]([^'\"]+)['\"]", body, flags=re.I
+    )
+    return None if match is None else match.group(1)
+
+
 def load_factory_geometry(
     fds_path: str | Path,
 ) -> tuple[list[float], list[dict[str, Any]], list[dict[str, Any]]]:
@@ -155,11 +162,29 @@ def load_factory_geometry(
             if xb is None:
                 continue
             target = obstacles if name == "OBST" else holes
-            target.append({"xb": xb})
+            target.append({"id": _parse_string(body, "ID"), "xb": xb})
 
     if mesh_xb is None:
         raise ValueError(f"MESH XB metadata not found in {fds_path}")
     return mesh_xb, obstacles, holes
+
+
+def obstacles_for_initial_robot_map(obstacles, scenario) -> list[dict[str, Any]]:
+    """Exclude FDS-only objects until a robot-side detector reports them."""
+    robot_map = scenario.get("robot_map", {})
+    excluded = robot_map.get("initially_unobserved_fds_obstacle_ids", [])
+    if not isinstance(excluded, list) or not all(
+        isinstance(item, str) and item for item in excluded
+    ):
+        raise ValueError(
+            "robot_map.initially_unobserved_fds_obstacle_ids must be a list "
+            "of non-empty strings"
+        )
+    known_ids = {item.get("id") for item in obstacles}
+    missing = sorted(set(excluded) - known_ids)
+    if missing:
+        raise ValueError(f"unknown FDS obstacle IDs excluded from robot map: {missing}")
+    return [item for item in obstacles if item.get("id") not in set(excluded)]
 
 
 def _nearest_indices(source: np.ndarray, target: np.ndarray) -> np.ndarray:
