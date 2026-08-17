@@ -1,0 +1,52 @@
+{
+  "status": "PASS",
+  "factory_v2_unchanged": true,
+  "factory_v2_source_hashes": {
+    "factory_v2_fds": "b43c416e5bb6bccb6d9aa6f872e8feb05f2c12de22a28b1cf8c68336639f0346",
+    "obstacles": "7fe0d6f96320efb7c6af7452389139dd221436bb7f5126427fa52d62126caab6",
+    "exits": "6c1df3d09e30d71f974fd2b2b69dd240f3c2dcb32df16ad75a993c7fb7a679c5",
+    "scenario": "1c0703945ed6c3a92e685a21ab9eefe86338c44754cc406e5700ec452602c692"
+  },
+  "exit1_fitted_source_slope": 1.7531742328961397,
+  "source_axis_angle_deg": 60.299825599931765,
+  "rotation_angle_deg": -60.299825599931765,
+  "rotation_pivot_fds_v2": [
+    9.384615384615383,
+    5.492307692307692
+  ],
+  "translation_raw_min": [
+    -9.420497120541064,
+    -18.196203628665046
+  ],
+  "unmapped_solid_policy": "reclassified_as_OTHERS",
+  "outer_boundary_surface": "OTHERS",
+  "others_cells": 9320,
+  "slam_wall_bridge_xb": [
+    12.4,
+    12.6,
+    6.4,
+    6.6,
+    0.0,
+    3.0
+  ],
+  "mesh": {
+    "ijk": [
+      141,
+      112,
+      15
+    ],
+    "xb": [
+      1.8,
+      30.0,
+      5.6,
+      28.0,
+      0.0,
+      3.0
+    ],
+    "cell_count": 236880
+  },
+  "generated_obstacles": 374,
+  "generated_exit_obstacles": 22,
+  "generated_scenario_obstacles": 15,
+  "generated_oil_vents": 31
+}

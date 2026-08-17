@@ -1,0 +1,90 @@
+import json
+from pathlib import Path
+
+import numpy as np
+import yaml
+
+from mission.mission_manager import MissionEvent, MissionManager, MissionState
+from world import MapMetadata, WorldState
+from mapping.partial_costmap import PartialCostmapConfig, PartialFireCostmap
+from navigation.exit_switching import ExitSwitchingConfig
+
+
+BASE = Path(__file__).resolve().parents[1]
+
+
+def ready(manager):
+    manager.handle_event(
+        MissionEvent.VICTIM_DETECTED, victim_id="v", victim_position=(1, 1)
+    )
+    manager.handle_event(MissionEvent.VICTIM_REACHED)
+    manager.handle_event(MissionEvent.ANNOUNCEMENT_FINISHED)
+    manager.handle_event(MissionEvent.VICTIM_STARTED_MOVING)
+    manager.handle_event(MissionEvent.VICTIM_READY_FOR_EVACUATION)
+
+
+def test_mission_no_hazard_routes_to_exit_evaluation():
+    manager = MissionManager()
+    ready(manager)
+    assert manager.current_state is MissionState.EVALUATING_HAZARD_INFORMATION
+    manager.handle_event(MissionEvent.NO_HAZARD_INFORMATION)
+    assert manager.current_state is MissionState.EVALUATING_EXITS
+    manager.handle_event(MissionEvent.SAFE_EXIT_SELECTED, exit_id="E1")
+    manager.handle_event(MissionEvent.EVACUATION_PLAN_CREATED, path=[(1, 1)])
+    assert manager.current_state is MissionState.ESCORT_VICTIM
+
+
+def test_mission_hazard_exit_and_no_safe_route_flows():
+    success = MissionManager()
+    ready(success)
+    success.handle_event(MissionEvent.HAZARD_INFORMATION_AVAILABLE)
+    success.handle_event(MissionEvent.SAFE_EXIT_SELECTED, exit_id="E2")
+    success.handle_event(MissionEvent.EVACUATION_PLAN_CREATED, path=[(1, 1)])
+    assert success.current_state is MissionState.ESCORT_VICTIM
+
+    failed = MissionManager()
+    ready(failed)
+    failed.handle_event(MissionEvent.HAZARD_INFORMATION_AVAILABLE)
+    failed.handle_event(MissionEvent.NO_SAFE_ROUTE_FOUND)
+    assert failed.current_state is MissionState.NO_SAFE_ROUTE
+
+
+def test_world_route_metadata_serializes_and_revisions_are_monotonic():
+    metadata = MapMetadata(0, 1, 0, 1, 1, 2, 2, (0, 0))
+    world = WorldState(metadata, np.zeros((2, 2), dtype=bool))
+    world.set_mission_entry("ENTRY", (0, 0))
+    world.update_costmap_revision(2)
+    payload = world.to_dict()
+    assert payload["mission_entry_id"] == "ENTRY"
+    assert payload["costmap_revision"] == 2
+    json.dumps(payload)
+
+
+def test_stage6_yaml_sections_load():
+    scenario = yaml.safe_load((BASE / "config/evacuation.yaml").read_text())
+    assert "mission_entry_id" not in scenario
+    assert scenario["exploration"]["use_current_robot_pose_as_start"] is True
+    assert scenario["evacuation_route_selection"]["fire_information_strategy"] == "evaluate_all_exits"
+    assert scenario["evacuation_route_selection"]["no_fire_information_strategy"] == "nearest_reachable_exit"
+    assert scenario["hazard_knowledge"]["temperature_elevated_c"] == 35.0
+    assert scenario["hazard_knowledge"]["co_elevated_ppm"] == 100.0
+    switching = ExitSwitchingConfig.from_mapping(scenario["exit_switching"])
+    assert switching.minimum_consecutive_increases == 3
+    assert scenario["replanning"]["max_replan_attempts"] == 5
+
+
+def test_costmap_revision_changes_only_for_nonempty_sensor_update():
+    class Grid:
+        width = height = 2
+        resolution = 1.0
+        def world_to_grid(self, x, y):
+            return int(x), int(y)
+        def in_bounds(self, node):
+            return 0 <= node[0] < 2 and 0 <= node[1] < 2
+
+    belief = PartialFireCostmap(
+        Grid(), np.zeros((2, 2), dtype=bool), PartialCostmapConfig()
+    )
+    assert belief.revision == 0
+    belief.update_co_observation(0, 0, 10, 1)
+    assert belief.revision == 1

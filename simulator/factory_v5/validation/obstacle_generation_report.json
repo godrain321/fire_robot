@@ -1,0 +1,49 @@
+{
+  "status": "PASS",
+  "protected_settings_unchanged": true,
+  "protected_setting_hashes": {
+    "exits": "6039bc0b13bc8e273abba2646a3e13cc55f00c232726181633e2fa8d344db9bd",
+    "scenario": "c5dee35b9ca00070bd42efedbe88b54e4666ddeed4b710ad47da5800b0dd072e",
+    "exit_blockers": "41ae40d175a4084d8e1bc9da0f2c7f422d5b0528c0a936ebccdca50f877b960d"
+  },
+  "source_obstacles_sha256": "7f72fb038abaff2345e292b8c521a9b7a2ba900075ffdb4d25136c637db96736",
+  "exit1_fitted_source_slope": 1.7531742328961397,
+  "source_axis_angle_deg": 60.299825599931765,
+  "rotation_angle_deg": -60.299825599931765,
+  "rotation_pivot_fds_v2": [
+    9.384615384615383,
+    5.492307692307692
+  ],
+  "translation_raw_min": [
+    -9.420497120541064,
+    -18.196203628665046
+  ],
+  "unmapped_solid_policy": "reclassified_as_OTHERS",
+  "outer_boundary_surface": "OTHERS",
+  "others_cells": 10473,
+  "slam_wall_bridge_xb": [
+    12.4,
+    12.6,
+    6.4,
+    6.6,
+    0.0,
+    3.0
+  ],
+  "mesh": {
+    "ijk": [
+      141,
+      112,
+      15
+    ],
+    "xb": [
+      1.8,
+      30.0,
+      5.6,
+      28.0,
+      0.0,
+      3.0
+    ],
+    "cell_count": 236880
+  },
+  "generated_obstacles": 329
+}

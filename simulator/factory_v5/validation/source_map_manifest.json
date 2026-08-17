@@ -1,0 +1,11 @@
+{
+  "source_map": "../../../fire_robot_rpi/maps/inno_map_nav.pgm",
+  "source_map_sha256": "c4523119b4c449c7fbbba42b3d1eb109e2e4958f8084b2b5f66926604f588426",
+  "source_map_yaml": "../../../fire_robot_rpi/maps/inno_map_nav.yaml",
+  "source_map_yaml_sha256": "32c787055214ec1554a4d4650a8ffa687026cf5c9305ebb1e358bcdc29a84f29",
+  "image_shape_yx": [453, 543],
+  "resolution_m": 0.05,
+  "ros_origin": [-7.521, -17.712, 0.0],
+  "unrotated_obstacles_sha256": "7f72fb038abaff2345e292b8c521a9b7a2ba900075ffdb4d25136c637db96736",
+  "rotated_obstacles_sha256": "f25599d77dba6a32ff1e0c060684992744a3e9c2bf69ff8b130499a2ac1869ec"
+}

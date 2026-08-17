@@ -1,0 +1,15 @@
+source_factory: ../../factory_v2
+resolution_m: 0.20
+height_m: 3.0
+alignment_reference: EXIT1_SOLID
+alignment_method: principal_axis_of_obstacle_centers
+rotation_direction: make_reference_parallel_to_positive_x
+output_origin_policy: translated_rotated_domain_lower_left
+usable_domain_fds: [1.8, 30.0, 5.6, 28.0, 0.0, 3.0]
+unmapped_solid_policy: omit
+outer_boundary:
+  surface_id: OTHERS
+  fill_between_outer_boundary_and_enclosure: true
+slam_wall_bridges_fds:
+  # Close the one-cell gap between the geometry formerly numbered 0087/0094.
+  - [12.4, 12.6, 6.4, 6.6]
