@@ -72,6 +72,56 @@ def test_initial_unknown_map_still_produces_path():
     )
 
 
+def test_observation_age_adds_bounded_soft_uncertainty_cost():
+    _, config, belief = make_belief()
+    thermal_update(belief, [ray_at(2, 2, 20.0)], 20.0, sim_time=1.0)
+    fresh_cost = belief.final_cost_map[2, 2]
+
+    grace_update = belief.advance_time(6.0)
+    assert not grace_update.changed_cells
+    assert belief.stale_observation_cost_map[2, 2] == 0.0
+
+    aging_update = belief.advance_time(16.0)
+    assert (2, 2) in aging_update.changed_cells
+    assert math.isclose(belief.stale_observation_cost_map[2, 2], 0.5)
+    assert math.isclose(belief.final_cost_map[2, 2], fresh_cost + 0.5)
+    assert not belief.blocked_mask[2, 2]
+
+    belief.advance_time(100.0)
+    assert belief.stale_observation_cost_map[2, 2] == config.stale_observation_maximum_cost
+    assert np.isfinite(belief.final_cost_map[2, 2])
+
+
+def test_reobservation_resets_stale_uncertainty_cost():
+    _, _, belief = make_belief()
+    thermal_update(belief, [ray_at(2, 2, 20.0)], 20.0, sim_time=1.0)
+    belief.advance_time(20.0)
+    assert belief.stale_observation_cost_map[2, 2] > 0.0
+
+    thermal_update(belief, [ray_at(2, 2, 21.0)], 21.0, sim_time=20.0)
+    belief.advance_time(20.0)
+
+    assert belief.stale_observation_cost_map[2, 2] == 0.0
+    assert belief.last_observed_time_map[2, 2] == 20.0
+
+
+def test_disabled_stale_uncertainty_keeps_observed_cost_constant():
+    _, _, belief = make_belief(stale_observation_cost_enabled=False)
+    thermal_update(belief, [ray_at(2, 2, 20.0)], 20.0, sim_time=1.0)
+    fresh_cost = belief.final_cost_map[2, 2]
+
+    update = belief.advance_time(100.0)
+
+    assert not update.changed_cells
+    assert belief.stale_observation_cost_map[2, 2] == 0.0
+    assert belief.final_cost_map[2, 2] == fresh_cost
+
+
+def test_stale_uncertainty_rejects_hard_block_policy():
+    with np.testing.assert_raises_regex(ValueError, "may not block cells"):
+        make_belief(stale_observation_block_cells=True)
+
+
 def test_high_thermal_observation_on_path_causes_detour():
     _, _, belief = make_belief()
     original = plan(belief)

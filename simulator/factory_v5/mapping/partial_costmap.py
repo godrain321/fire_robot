@@ -29,6 +29,13 @@ class PartialCostmapConfig(FireCostmapConfig):
     selected_fds_start_time: float = 0.0
     simulation_dt: float = 0.1
     render_fps: int = 30
+    stale_observation_cost_enabled: bool = True
+    stale_observation_grace_period_s: float = 5.0
+    stale_observation_cost_per_second: float = 0.05
+    stale_observation_maximum_cost: float = 2.0
+    stale_observation_apply_to_temperature: bool = True
+    stale_observation_apply_to_co: bool = True
+    stale_observation_block_cells: bool = False
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -39,6 +46,15 @@ class PartialCostmapConfig(FireCostmapConfig):
             "replan_distance": self.replan_distance,
             "gas_update_radius": self.gas_update_radius,
             "selected_fds_start_time": self.selected_fds_start_time,
+            "stale_observation_grace_period_s": (
+                self.stale_observation_grace_period_s
+            ),
+            "stale_observation_cost_per_second": (
+                self.stale_observation_cost_per_second
+            ),
+            "stale_observation_maximum_cost": (
+                self.stale_observation_maximum_cost
+            ),
         }
         for name, value in non_negative.items():
             if not math.isfinite(float(value)) or value < 0.0:
@@ -61,6 +77,19 @@ class PartialCostmapConfig(FireCostmapConfig):
             or self.render_fps < 1
         ):
             raise ValueError("render_fps must be a positive integer")
+        boolean_fields = (
+            "stale_observation_cost_enabled",
+            "stale_observation_apply_to_temperature",
+            "stale_observation_apply_to_co",
+            "stale_observation_block_cells",
+        )
+        for name in boolean_fields:
+            if not isinstance(getattr(self, name), bool):
+                raise ValueError(f"{name} must be a Boolean")
+        if self.stale_observation_block_cells:
+            raise ValueError(
+                "stale observations may add uncertainty cost but may not block cells"
+            )
 
 
 @dataclass(frozen=True)
@@ -98,11 +127,13 @@ class PartialFireCostmap:
         self.co_cost_map = np.zeros(shape, dtype=float)
         self.unknown_cost_map = np.zeros(shape, dtype=float)
         self.estimated_fire_cost_map = np.zeros(shape, dtype=float)
+        self.stale_observation_cost_map = np.zeros(shape, dtype=float)
         self.dynamic_obstacle_map = np.zeros(shape, dtype=bool)
         self.dynamic_inflated_obstacle_map = np.zeros(shape, dtype=bool)
         self.blocked_mask = static.copy()
         self.final_cost_map = np.full(shape, config.base_cost, dtype=float)
         self.last_observed_time_map = np.full(shape, np.nan, dtype=float)
+        self.current_time = 0.0
         # Monotonic sensor-belief revision.  A revision requests inexpensive
         # path validation; it does not by itself force a full replan.
         self.revision = 0
@@ -278,6 +309,30 @@ class PartialFireCostmap:
         changed = {(int(col), int(row)) for row, col in changed_indices}
         return self._finish_update(changed, old_blocked)
 
+    def advance_time(self, sim_time: float) -> BeliefUpdate:
+        """Refresh bounded uncertainty cost for aging sensor observations."""
+        now = float(sim_time)
+        if not math.isfinite(now):
+            raise ValueError("sim_time must be finite")
+        if now < self.current_time - 1e-12:
+            raise ValueError("sim_time must not move backwards")
+        old_cost = self.stale_observation_cost_map.copy()
+        old_blocked = self._snapshot_blocked()
+        self.current_time = now
+        self.recalculate()
+        changed_indices = np.argwhere(
+            ~np.isclose(
+                old_cost, self.stale_observation_cost_map,
+                rtol=1e-9, atol=1e-12,
+            )
+        )
+        changed = {
+            (int(col), int(row)) for row, col in changed_indices
+        }
+        if changed:
+            self.revision += 1
+        return BeliefUpdate(frozenset(changed), frozenset())
+
     def recalculate(self) -> None:
         """Rebuild costs using observed values and per-modality uncertainty."""
         cfg = self.config
@@ -317,6 +372,30 @@ class PartialFireCostmap:
             partially_observed & ~self.co_observed_mask
         ] += cfg.unobserved_co_penalty
 
+        eligible_for_aging = np.zeros(self.shape, dtype=bool)
+        if cfg.stale_observation_apply_to_temperature:
+            eligible_for_aging |= self.temperature_observed_mask
+        if cfg.stale_observation_apply_to_co:
+            eligible_for_aging |= self.co_observed_mask
+        self.stale_observation_cost_map = np.zeros(self.shape, dtype=float)
+        if cfg.stale_observation_cost_enabled:
+            valid_time = eligible_for_aging & np.isfinite(
+                self.last_observed_time_map
+            )
+            age = np.zeros(self.shape, dtype=float)
+            age[valid_time] = np.maximum(
+                0.0,
+                self.current_time - self.last_observed_time_map[valid_time],
+            )
+            stale_age = np.maximum(
+                0.0, age - cfg.stale_observation_grace_period_s
+            )
+            self.stale_observation_cost_map[valid_time] = np.minimum(
+                cfg.stale_observation_maximum_cost,
+                stale_age[valid_time]
+                * cfg.stale_observation_cost_per_second,
+            )
+
         temperature_blocked = (
             self.temperature_observed_mask
             & (self.temperature_belief_map >= cfg.temperature_blocked)
@@ -334,6 +413,7 @@ class PartialFireCostmap:
             + self.co_cost_map
             + self.unknown_cost_map
             + self.estimated_fire_cost_map
+            + self.stale_observation_cost_map
         )
         self.final_cost_map[self.blocked_mask] = np.inf
         self._validate_layers()
@@ -346,6 +426,7 @@ class PartialFireCostmap:
             "temperature_belief_map", "co_belief_map",
             "temperature_cost_map", "co_cost_map", "unknown_cost_map",
             "estimated_fire_cost_map",
+            "stale_observation_cost_map",
             "dynamic_obstacle_map", "dynamic_inflated_obstacle_map",
             "blocked_mask", "final_cost_map", "last_observed_time_map",
         )

@@ -228,6 +228,17 @@ sensor_costmap:
   co_weight: 8.0
   co_power: 2.0
 
+# A previously safe observation becomes less certain as a fire evolves. This
+# adds bounded soft cost only; stale information never becomes a hard block.
+stale_observation_cost:
+  enabled: true
+  grace_period_s: 5.0
+  cost_per_second: 0.05
+  maximum_cost: 2.0
+  apply_to_temperature: true
+  apply_to_co: true
+  block_stale_cells: false
+
 # Sensor-only fire-source inference.  This never reads the FDS source position
 # or full Ground Truth arrays. Direct 60 C / 1600 ppm movement blocks remain in
 # PartialCostmapConfig and are not duplicated here.

@@ -193,6 +193,27 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         gas_update_radius=args.gas_update_radius,
         use_inflation=not args.no_inflation,
         inflation_radius=args.inflation_radius,
+        stale_observation_cost_enabled=(
+            args.stale_observation_cost_config["enabled"]
+        ),
+        stale_observation_grace_period_s=(
+            args.stale_observation_cost_config["grace_period_s"]
+        ),
+        stale_observation_cost_per_second=(
+            args.stale_observation_cost_config["cost_per_second"]
+        ),
+        stale_observation_maximum_cost=(
+            args.stale_observation_cost_config["maximum_cost"]
+        ),
+        stale_observation_apply_to_temperature=(
+            args.stale_observation_cost_config["apply_to_temperature"]
+        ),
+        stale_observation_apply_to_co=(
+            args.stale_observation_cost_config["apply_to_co"]
+        ),
+        stale_observation_block_cells=(
+            args.stale_observation_cost_config["block_stale_cells"]
+        ),
     )
     ground_truth = FDSGroundTruthEnvironment(
         args.fds_file, args.temperature_npz, args.fds_dir, args.co_npz
@@ -760,8 +781,10 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             else:
                 from mapping.partial_costmap import BeliefUpdate
                 localization_update = BeliefUpdate(frozenset(), frozenset())
+            aging_update = belief.advance_time(fds_time)
             _, newly_blocked = _combine_updates(
-                thermal_update, co_update, localization_update, dynamic_update
+                thermal_update, co_update, localization_update, dynamic_update,
+                aging_update,
             )
             world.estimated_fire_map.sync_from_belief(belief)
             world.estimated_fire_map.sync_fire_localization(fire_localizer)
@@ -2195,6 +2218,38 @@ def apply_scenario_config(args):
         value = getattr(args, name)
         if not math.isfinite(value) or value < 0.0:
             raise ValueError(f"{name} must be finite and non-negative")
+    stale_defaults = {
+        "enabled": True,
+        "grace_period_s": 5.0,
+        "cost_per_second": 0.05,
+        "maximum_cost": 2.0,
+        "apply_to_temperature": True,
+        "apply_to_co": True,
+        "block_stale_cells": False,
+    }
+    stale_config = scenario.get("stale_observation_cost", {})
+    if not isinstance(stale_config, dict):
+        raise ValueError("stale_observation_cost must be a mapping")
+    args.stale_observation_cost_config = {
+        name: stale_config.get(name, default)
+        for name, default in stale_defaults.items()
+    }
+    for name in (
+        "enabled", "apply_to_temperature", "apply_to_co",
+        "block_stale_cells",
+    ):
+        if not isinstance(args.stale_observation_cost_config[name], bool):
+            raise ValueError(f"stale_observation_cost.{name} must be a Boolean")
+    for name in ("grace_period_s", "cost_per_second", "maximum_cost"):
+        value = args.stale_observation_cost_config[name]
+        if isinstance(value, bool):
+            raise ValueError(f"stale_observation_cost.{name} must be numeric")
+        value = float(value)
+        if not math.isfinite(value) or value < 0.0:
+            raise ValueError(
+                f"stale_observation_cost.{name} must be finite and non-negative"
+            )
+        args.stale_observation_cost_config[name] = value
     if args.robot_angular_speed_deg <= 0.0:
         raise ValueError("robot angular speed must be positive")
     if args.render_fps < 1:

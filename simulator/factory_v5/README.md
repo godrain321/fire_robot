@@ -146,6 +146,11 @@ factory_v1 10 m range and line-of-sight test. The robot approaches within 1 m,
 then chooses the currently reachable configured exit with minimum weighted-A*
 cost.
 
+Observed fire-map cells also carry a bounded information-age uncertainty cost.
+The default policy adds no cost for 5 seconds, then adds 0.05 per second up to
+2.0. A fresh temperature or CO observation resets the cell's age cost. Aging
+never changes the saved sensor value and never creates a blocked cell.
+
 `robot_start`, the victim, and exit approach points are explicit temporary
 values in `config/evacuation.yaml`. They are validated against the inflated
 obstacle grid and are never silently moved. The semantic INIT and exit marker
