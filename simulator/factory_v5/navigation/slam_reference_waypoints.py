@@ -13,7 +13,7 @@ import yaml
 @dataclass(frozen=True)
 class SlamReferenceWaypointConfig:
     enabled: bool = False
-    waypoint_file: str = "config/slam_reference_waypoints.yaml"
+    waypoint_file: str = "config/waypoint_queue_latest.yaml"
     map_metadata_file: str = "config/map_metadata.yaml"
 
     def __post_init__(self) -> None:

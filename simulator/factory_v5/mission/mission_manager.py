@@ -112,6 +112,7 @@ _TRANSITIONS: dict[MissionState, dict[MissionEvent, MissionState]] = {
         MissionEvent.EXIT_CHECK_COMPLETED: MissionState.SEARCH_EXITS,
         MissionEvent.EXPLORATION_STALLED: MissionState.EXPLORATION_STALLED,
         MissionEvent.EXPLORATION_COMPLETED: MissionState.EXPLORATION_COMPLETE,
+        MissionEvent.ROBOT_EVACUATED: MissionState.ROBOT_EVACUATED,
     },
     MissionState.EXPLORATION_STALLED: {
         MissionEvent.RETRY_REQUESTED: MissionState.SEARCH_EXITS,

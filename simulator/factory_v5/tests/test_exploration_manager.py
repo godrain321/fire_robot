@@ -170,6 +170,15 @@ def test_exploration_mission_stall_retry_and_completion_states():
     assert mission.current_state is MissionState.EXPLORATION_COMPLETE
 
 
+def test_search_can_finish_directly_at_current_usable_exit():
+    mission = MissionManager()
+    mission.handle_event(
+        MissionEvent.ROBOT_EVACUATED, exit_id="HERE",
+        reason="remaining recheck routes unavailable",
+    )
+    assert mission.current_state is MissionState.ROBOT_EVACUATED
+
+
 def test_robot_evacuates_when_post_evacuation_exploration_is_stalled():
     world, _, _ = make_system()
     world.update_exit_status("SHORT_ASTAR", ExitStatus.USABLE)

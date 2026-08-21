@@ -155,6 +155,7 @@ class WorldState:
         self.search_frontier_target_grid: tuple[int, int] | None = None
         self.search_rechecked_exit_ids: set[str] = set()
         self.search_exit_temperature_costs: dict[str, float | None] = {}
+        self.search_recheck_dispositions: dict[str, dict[str, Any]] = {}
         self.active_following_victim_id: str | None = None
         self.victim_following_controller = None
         self.victim_following_config = None
@@ -342,6 +343,19 @@ class WorldState:
                 None if exit_temperature_cost is None
                 else float(exit_temperature_cost)
             )
+
+    def record_search_recheck_disposition(
+        self, exit_id: str, *, disposition: str, reason: str,
+        costmap_revision: int, evaluated_at: float,
+    ) -> None:
+        """Record a recheck outcome without changing permanent exit safety."""
+        self.get_exit(exit_id)
+        self.search_recheck_dispositions[str(exit_id)] = {
+            "disposition": str(disposition),
+            "reason": str(reason),
+            "costmap_revision": int(costmap_revision),
+            "evaluated_at": float(evaluated_at),
+        }
 
     def clear_exploration_stall(self) -> None:
         self.exploration_stalled = False
@@ -907,6 +921,9 @@ class WorldState:
             "exploration_interruptions": self.exploration_interruptions,
             "exploration_stalled": self.exploration_stalled,
             "exploration_stall_reason": self.exploration_stall_reason,
+            "search_recheck_dispositions": dict(
+                self.search_recheck_dispositions
+            ),
             "active_following_victim_id": self.active_following_victim_id,
             "victim_following": (
                 None if self.victim_following_controller is None

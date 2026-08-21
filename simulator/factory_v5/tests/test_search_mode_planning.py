@@ -5,9 +5,12 @@ import pytest
 
 from mapping.partial_costmap import PartialCostmapConfig, PartialFireCostmap
 from navigation.search_mode import (
-    SearchPlanningConfig, frontier_mask, plan_nearest_frontier,
-    representative_exit_temperature_cost,
+    SearchPlanningConfig, confirmed_usable_exits, failed_recheck_exit_ids,
+    frontier_mask,
+    initialize_exit_recheck, plan_nearest_frontier,
+    representative_exit_temperature_cost, usable_exit_at_pose,
 )
+from world.entities import Exit, ExitStatus
 
 
 class TinyGrid:
@@ -96,6 +99,64 @@ def test_exit_temperature_uses_observed_neighborhood_mean():
     assert representative_exit_temperature_cost(
         costs, observed, (2, 2), radius_cells=1
     ) == pytest.approx(6.0)
+
+
+def test_recheck_initialization_skips_blocked_and_dangerous_exits():
+    exits = (
+        Exit("U", (0, 0), (0, 0), ExitStatus.USABLE),
+        Exit("B", (0, 0), (0, 0), ExitStatus.BLOCKED,
+             blocked_reason="fixture"),
+        Exit("D", (0, 0), (0, 0), ExitStatus.DANGEROUS,
+             danger_reason="fixture"),
+        Exit("E", (0, 0), (0, 0), ExitStatus.DANGER_EXPECTED,
+             danger_reason="fixture"),
+    )
+    pending, skipped = initialize_exit_recheck(exits)
+    assert pending == {"U"}
+    assert set(skipped) == {"B", "D", "E"}
+
+
+def test_confirmed_usable_exits_excludes_unknown_and_is_deterministic():
+    exits = (
+        Exit("Z", (0, 0), (0, 0), ExitStatus.USABLE),
+        Exit("U", (0, 0), (0, 0), ExitStatus.UNKNOWN),
+        Exit("A", (0, 0), (0, 0), ExitStatus.USABLE),
+    )
+    assert tuple(item.exit_id for item in confirmed_usable_exits(exits)) == (
+        "A", "Z",
+    )
+
+
+def test_failed_recheck_exits_are_deterministic_and_exclude_accepted():
+    class Evaluation:
+        def __init__(self, exit_id, accepted):
+            self.exit_id = exit_id
+            self.accepted = accepted
+
+    assert failed_recheck_exit_ids((
+        Evaluation("C", False), Evaluation("A", True),
+        Evaluation("B", False),
+    )) == ("B", "C")
+
+
+def test_current_usable_exit_is_selected_without_requiring_another_path():
+    exits = (
+        Exit("FAR", (4, 0), (4, 0), ExitStatus.USABLE),
+        Exit("HERE", (1, 1), (1, 1), ExitStatus.USABLE),
+        Exit("BLOCKED", (1, 1), (1, 1), ExitStatus.BLOCKED,
+             blocked_reason="fixture"),
+    )
+    selected = usable_exit_at_pose(
+        exits, (1.2, 1.0), maximum_distance_m=0.5
+    )
+    assert selected is not None and selected.exit_id == "HERE"
+
+
+def test_current_usable_exit_requires_completion_radius():
+    exits = (Exit("FAR", (2, 0), (2, 0), ExitStatus.USABLE),)
+    assert usable_exit_at_pose(
+        exits, (0, 0), maximum_distance_m=1.0
+    ) is None
 
 
 @pytest.mark.parametrize("values", [

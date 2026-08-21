@@ -15,7 +15,7 @@ planner:
 # Measured ROS-map anchors used by the global reference graph planner.
 slam_reference_waypoints:
   enabled: true
-  waypoint_file: config/slam_reference_waypoints.yaml
+  waypoint_file: config/waypoint_queue_latest.yaml
   map_metadata_file: config/map_metadata.yaml
 
 # Global route selection uses only the measured anchors as graph nodes. Every

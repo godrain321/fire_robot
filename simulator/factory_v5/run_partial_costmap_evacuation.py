@@ -59,7 +59,10 @@ from navigation.exploration_manager import (
 )
 from navigation.search_mode import (
     SearchPlanningConfig, SearchFireMapView, SearchStage,
+    confirmed_usable_exits,
+    failed_recheck_exit_ids, initialize_exit_recheck,
     plan_nearest_frontier, representative_exit_temperature_cost,
+    usable_exit_at_pose,
 )
 from navigation.initial_advance import InitialAdvanceConfig
 from navigation.victim_following import (
@@ -712,6 +715,73 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         search_costmap = search_planning_view()
         search_fire_map = search_fire_map_view()
         plan = None
+
+        def finish_at_current_usable_exit(reason: str) -> bool:
+            nonlocal search_stage, status, no_path_active
+            exit_item = usable_exit_at_pose(
+                world.exits.values(), (state.x, state.y),
+                maximum_distance_m=args.exit_reached_distance,
+            )
+            if exit_item is None:
+                return False
+            follower.clear()
+            world.clear_active_route()
+            world.clear_active_exploration_plan()
+            world.mark_robot_evacuated(
+                exit_item.exit_id, (state.x, state.y),
+                sim_time=sim_elapsed,
+                maximum_distance_m=args.exit_reached_distance,
+                reason=reason,
+            )
+            if mission.current_state in (
+                MissionState.SEARCH_EXITS,
+                MissionState.EXPLORATION_STALLED,
+            ):
+                mission.handle_event(
+                    MissionEvent.ROBOT_EVACUATED,
+                    exit_id=exit_item.exit_id, sim_time=sim_elapsed,
+                    reason=reason,
+                )
+            metrics.robot_evacuated = True
+            metrics.robot_evacuated_exit_id = exit_item.exit_id
+            search_stage = SearchStage.COMPLETE
+            status = f"ROBOT_EVACUATED: {exit_item.exit_id}"
+            no_path_active = False
+            world.clear_exploration_stall()
+            return True
+
+        def plan_nearest_usable_exit():
+            """Plan the shortest reachable route to a confirmed usable exit."""
+            usable_candidates = confirmed_usable_exits(world.exits.values())
+            attempt = search_evacuation_planner.plan(
+                usable_candidates, (state.x, state.y),
+                cost_map=search_costmap,
+                static_obstacle_map=world.static_obstacle_map,
+                dynamic_obstacle_map=world.dynamic_obstacle_mask(),
+                estimated_fire_map=search_fire_map,
+                created_at=sim_elapsed,
+            ) if usable_candidates else None
+            if attempt is None:
+                return None
+            world.record_exit_evaluations(attempt)
+            world.record_exploration_reachability(
+                attempt.all_evaluations,
+                costmap_revision=belief.revision,
+                evaluated_at=sim_elapsed,
+            )
+            if not attempt.success:
+                return None
+            return ExplorationPlan(
+                True, phase, (state.x, state.y), attempt.selected_exit_id,
+                attempt.selected_approach_position_world,
+                attempt.path_grid, attempt.path_world,
+                tuple(sorted(
+                    (item.exit_id, item.path_length_m)
+                    for item in attempt.all_evaluations
+                    if item.path_length_m is not None
+                )), belief.revision, sim_elapsed, None, tuple(), attempt,
+            )
+
         if search_stage is SearchStage.CHECK_EXITS:
             plan = exploration_manager.plan_next_exit(
                 world, (state.x, state.y), cost_map=search_costmap,
@@ -720,6 +790,16 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             )
             if not plan.success and plan.failure_reason == "no_unchecked_exits":
                 search_stage = SearchStage.EXPLORE_FRONTIERS
+            elif not plan.success:
+                if finish_at_current_usable_exit(
+                    "remaining unknown exits have no safe route; robot exits "
+                    "through current confirmed usable exit"
+                ):
+                    return True
+                usable_plan = plan_nearest_usable_exit()
+                if usable_plan is not None:
+                    search_stage = SearchStage.FINAL_EXIT
+                    plan = usable_plan
 
         if search_stage is SearchStage.EXPLORE_FRONTIERS and (
             plan is None or not plan.success
@@ -749,11 +829,27 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                 status = f"SEARCHING UNKNOWN FRONTIER {frontier.target_grid}"
                 no_path_active = False
                 return True
-            search_stage = SearchStage.RECHECK_EXITS
-            search_recheck_pending = set(world.exits)
-            active_frontier_grid = None
+            usable_plan = plan_nearest_usable_exit()
+            if usable_plan is not None:
+                search_stage = SearchStage.FINAL_EXIT
+                plan = usable_plan
+            else:
+                search_stage = SearchStage.RECHECK_EXITS
+                search_recheck_pending, skipped = initialize_exit_recheck(
+                    world.exits.values()
+                )
+                for exit_id, reason in skipped.items():
+                    world.record_search_recheck_disposition(
+                        exit_id, disposition="RECHECK_SKIPPED", reason=reason,
+                        costmap_revision=belief.revision,
+                        evaluated_at=sim_elapsed,
+                    )
+                active_frontier_grid = None
 
-        if search_stage in (SearchStage.RECHECK_EXITS, SearchStage.FINAL_EXIT):
+        if (
+            plan is None
+            and search_stage in (SearchStage.RECHECK_EXITS, SearchStage.FINAL_EXIT)
+        ):
             if search_stage is SearchStage.RECHECK_EXITS and not search_recheck_pending:
                 search_stage = SearchStage.FINAL_EXIT
             candidates = [
@@ -767,36 +863,9 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                 )
             ]
             if search_stage is SearchStage.FINAL_EXIT:
-                radius = int(math.ceil(
-                    search_planning_config.exit_temperature_radius_m
-                    / grid_map.resolution
-                ))
-                temperature_ranked = []
-                for item in candidates:
-                    temperature_cost = representative_exit_temperature_cost(
-                        belief.temperature_cost_map,
-                        belief.temperature_observed_mask,
-                        grid_map.world_to_grid(*item.position_world),
-                        radius_cells=radius,
-                    )
-                    temperature_ranked.append((
-                        temperature_cost is None,
-                        math.inf if temperature_cost is None else temperature_cost,
-                        item.exit_id,
-                        item,
-                    ))
-                temperature_ranked.sort(key=lambda value: value[:3])
-                candidates = [value[3] for value in temperature_ranked]
-                candidates = [
-                    item for item in candidates
-                    if item.status is ExitStatus.USABLE
-                ]
+                candidates = list(confirmed_usable_exits(candidates))
             raw_plan = None
-            candidate_groups = (
-                ([item] for item in candidates)
-                if search_stage is SearchStage.FINAL_EXIT
-                else (candidates,)
-            )
+            candidate_groups = (candidates,)
             for candidate_group in candidate_groups:
                 attempt = search_evacuation_planner.plan(
                     candidate_group, (state.x, state.y),
@@ -806,6 +875,24 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     estimated_fire_map=search_fire_map,
                     created_at=sim_elapsed,
                 ) if candidate_group else None
+                if attempt is not None:
+                    world.record_exit_evaluations(attempt)
+                    world.record_exploration_reachability(
+                        attempt.all_evaluations,
+                        costmap_revision=belief.revision,
+                        evaluated_at=sim_elapsed,
+                    )
+                    if search_stage is SearchStage.RECHECK_EXITS:
+                        for exit_id in failed_recheck_exit_ids(
+                            attempt.all_evaluations
+                        ):
+                            search_recheck_pending.discard(exit_id)
+                            world.record_search_recheck_disposition(
+                                exit_id, disposition="UNREACHABLE",
+                                reason="no_valid_recheck_path",
+                                costmap_revision=belief.revision,
+                                evaluated_at=sim_elapsed,
+                            )
                 if attempt is not None and attempt.success:
                     raw_plan = attempt
                     break
@@ -821,16 +908,26 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     )), belief.revision, sim_elapsed, None, tuple(), raw_plan,
                 )
             else:
-                if search_stage is SearchStage.FINAL_EXIT:
-                    status = "SEARCH_COMPLETE_NO_SAFE_EXIT"
-                else:
-                    status = "SEARCH_RECHECK_STALLED"
+                if search_stage is SearchStage.RECHECK_EXITS:
+                    # Every remaining candidate was evaluated individually by
+                    # the planner above.  Failed candidates are transiently
+                    # UNREACHABLE for this revision, so recheck is complete.
+                    search_recheck_pending.clear()
+                    if finish_at_current_usable_exit(
+                        "remaining exit recheck routes are unavailable; "
+                        "robot exits through current confirmed usable exit"
+                    ):
+                        return True
+                    search_stage = SearchStage.FINAL_EXIT
+                    return start_or_resume_exploration(phase)
+                if finish_at_current_usable_exit(
+                    "no safe route to another final exit; robot exits through "
+                    "current confirmed usable exit"
+                ):
+                    return True
+                status = "SEARCH_COMPLETE_NO_SAFE_EXIT"
                 no_path_active = True
-                failure_reason = (
-                    "no_safe_usable_exit_after_recheck"
-                    if search_stage is SearchStage.FINAL_EXIT
-                    else "no_reachable_exit_for_search_recheck"
-                )
+                failure_reason = "no_safe_usable_exit_after_recheck"
                 world.mark_exploration_stalled(failure_reason)
                 if mission.current_state is MissionState.SEARCH_EXITS:
                     mission.handle_event(
@@ -956,6 +1053,12 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                 thermal_viewer = None
 
     while sim_elapsed <= args.max_time:
+        if metrics.robot_evacuated:
+            if pygame_viewer is not None:
+                pygame_viewer.close()
+            if thermal_viewer is not None:
+                thermal_viewer.close()
+            return True, metrics, belief, sim_elapsed
         if pygame_viewer is not None:
             running, paused = pygame_viewer.process_events()
             if not running:
@@ -2239,7 +2342,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                         checked_exit_id, (state.x, state.y),
                         sim_time=sim_elapsed,
                         maximum_distance_m=args.exit_reached_distance,
-                        reason="search completed; lowest-temperature usable exit",
+                        reason="search completed; shortest reachable usable exit",
                     )
                     metrics.robot_evacuated = True
                     metrics.robot_evacuated_exit_id = checked_exit_id
@@ -2247,8 +2350,9 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
                     status = f"ROBOT_EVACUATED: {checked_exit_id}"
                     if mission.current_state is MissionState.SEARCH_EXITS:
                         mission.handle_event(
-                            MissionEvent.EXPLORATION_COMPLETED,
-                            sim_time=sim_elapsed,
+                            MissionEvent.ROBOT_EVACUATED,
+                            exit_id=checked_exit_id, sim_time=sim_elapsed,
+                            reason="shortest reachable usable exit reached",
                         )
                     continue
             if exploration_config.reselect_after_each_exit_check:

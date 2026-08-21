@@ -9,6 +9,7 @@ import math
 import numpy as np
 
 from planner.a_star import weighted_a_star
+from world.entities import ExitStatus
 
 
 class SearchStage(Enum):
@@ -17,6 +18,59 @@ class SearchStage(Enum):
     RECHECK_EXITS = "recheck_exits"
     FINAL_EXIT = "final_exit"
     COMPLETE = "complete"
+
+
+RECHECK_EXCLUDED_STATUSES = frozenset({
+    ExitStatus.BLOCKED,
+    ExitStatus.DANGEROUS,
+    ExitStatus.DANGER_EXPECTED,
+})
+
+
+def confirmed_usable_exits(exits):
+    """Return confirmed usable exits in deterministic ID order."""
+    return tuple(sorted(
+        (item for item in exits if item.status is ExitStatus.USABLE),
+        key=lambda item: item.exit_id,
+    ))
+
+
+def initialize_exit_recheck(exits):
+    """Return eligible pending IDs and explicitly skipped exit dispositions."""
+    pending = set()
+    dispositions = {}
+    for item in exits:
+        if item.status in RECHECK_EXCLUDED_STATUSES:
+            dispositions[item.exit_id] = f"recheck_skipped:{item.status.value}"
+        else:
+            pending.add(item.exit_id)
+    return pending, dispositions
+
+
+def failed_recheck_exit_ids(evaluations) -> tuple[str, ...]:
+    """Return deterministic IDs that failed this revision's route evaluation."""
+    return tuple(sorted(
+        item.exit_id for item in evaluations if not item.accepted
+    ))
+
+
+def usable_exit_at_pose(exits, robot_position_world, *, maximum_distance_m):
+    """Return the nearest USABLE exit whose completion region contains pose."""
+    maximum_distance_m = float(maximum_distance_m)
+    if not math.isfinite(maximum_distance_m) or maximum_distance_m < 0:
+        raise ValueError("maximum_distance_m must be finite and non-negative")
+    position = tuple(map(float, robot_position_world))
+    if len(position) != 2 or not all(math.isfinite(value) for value in position):
+        raise ValueError("robot_position_world must be finite (x, y)")
+    matches = []
+    for item in exits:
+        if item.status is not ExitStatus.USABLE:
+            continue
+        target = item.approach_position_world or item.position_world
+        distance = math.dist(position, target)
+        if distance <= maximum_distance_m + 1e-12:
+            matches.append((distance, item.exit_id, item))
+    return None if not matches else min(matches, key=lambda value: value[:2])[2]
 
 
 @dataclass(frozen=True)

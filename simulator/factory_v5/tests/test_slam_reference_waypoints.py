@@ -19,7 +19,7 @@ def factory_metadata():
 
 def test_all_measured_slam_points_transform_and_round_trip():
     points, transform = load_slam_reference_waypoints(
-        FACTORY_DIR / "config/slam_reference_waypoints.yaml",
+        FACTORY_DIR / "config/waypoint_queue_latest.yaml",
         FACTORY_DIR / "config/map_metadata.yaml",
         factory_metadata(),
     )
