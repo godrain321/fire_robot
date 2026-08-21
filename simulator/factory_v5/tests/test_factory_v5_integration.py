@@ -96,6 +96,18 @@ def test_exit1_scenario_blocker_is_loaded_without_changing_base_includes():
     assert not any(item["xb"] == blocker_xb for item in planner_obstacles)
 
 
+def test_optional_unobserved_obstacle_may_be_absent_from_scenario():
+    obstacles = [{"id": "KNOWN_WALL", "xb": [0, 1, 0, 1, 0, 1]}]
+    scenario = {
+        "robot_map": {
+            "initially_unobserved_fds_obstacle_ids": [
+                "EXIT1_FALLEN_STORAGE_RACK"
+            ]
+        }
+    }
+    assert obstacles_for_initial_robot_map(obstacles, scenario) == obstacles
+
+
 def test_world_grid_roundtrip_and_boundaries():
     mesh, _, grid, _ = _scenario_grid()
     for x, y in (

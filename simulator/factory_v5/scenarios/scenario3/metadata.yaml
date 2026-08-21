@@ -1,0 +1,9 @@
+format_version: 1
+scenario_id: scenario3
+description: Fire near V5_MACHINERY_0016
+fds_file: scenario3.fds
+fds_result_dir: fds_result
+temperature_npz: processed/fds_temperature_3d_timeseries.npz
+co_npz: processed/fds_co_2d_timeseries.npz
+# Experiment metadata only; never use as robot belief or planner input.
+fire_position_world: [21.6, 15.7]

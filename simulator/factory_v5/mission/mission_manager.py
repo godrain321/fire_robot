@@ -29,6 +29,7 @@ class MissionState(Enum):
     FOLLOW_WAIT = "Waiting for escorted victim to catch up"
     FOLLOW_FAILED = "Victim following failed"
     EVACUATION_COMPLETE = "Evacuation complete"
+    ROBOT_EVACUATED = "Robot evacuated through exit"
     REPORT_IMMOBILE_VICTIM = "Reporting immobile victim"
     REPLAN = "Replanning evacuation route"
     NO_SAFE_EXIT = "No safe exit"
@@ -84,6 +85,7 @@ class MissionEvent(Enum):
     VICTIM_LAGGING = "victim_lagging"
     VICTIM_CAUGHT_UP = "victim_caught_up"
     VICTIM_FOLLOW_FAILED = "victim_follow_failed"
+    ROBOT_EVACUATED = "robot_evacuated"
 
 
 class InvalidTransitionError(RuntimeError):
@@ -114,9 +116,11 @@ _TRANSITIONS: dict[MissionState, dict[MissionEvent, MissionState]] = {
     MissionState.EXPLORATION_STALLED: {
         MissionEvent.RETRY_REQUESTED: MissionState.SEARCH_EXITS,
         MissionEvent.VICTIM_DETECTED: MissionState.APPROACH_VICTIM,
+        MissionEvent.ROBOT_EVACUATED: MissionState.ROBOT_EVACUATED,
     },
     MissionState.EXPLORATION_COMPLETE: {
         MissionEvent.SEARCH_RESUMED: MissionState.SEARCH_EXITS,
+        MissionEvent.ROBOT_EVACUATED: MissionState.ROBOT_EVACUATED,
     },
     MissionState.APPROACH_VICTIM: {
         MissionEvent.VICTIM_REACHED: MissionState.ANNOUNCE_EVACUATION,
@@ -256,6 +260,7 @@ _DEFAULT_REASONS = {
     MissionEvent.VICTIM_LAGGING: "victim exceeded the maximum following distance",
     MissionEvent.VICTIM_CAUGHT_UP: "victim returned within the following resume distance",
     MissionEvent.VICTIM_FOLLOW_FAILED: "victim failed to catch up after repeated guidance",
+    MissionEvent.ROBOT_EVACUATED: "robot exited after post-evacuation exploration became unavailable",
     MissionEvent.EXPLORATION_COMPLETED: "all exits have been directly checked",
 }
 

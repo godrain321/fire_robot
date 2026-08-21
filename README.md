@@ -112,9 +112,14 @@ python3 run_partial_costmap_evacuation.py --headless
 FDS 결과를 runtime NPZ로 다시 만들 때는 다음을 실행한다.
 
 ```bash
-./prepare_temperature_npz.sh
-python3 pack_co_to_npz.py
+./prepare_scenario_npz.sh \
+  scenarios/baseline scenarios/baseline/fds_result factory_v5.fds
 ```
+
+화재 위치별 실험은 Python 코드를 복사하지 않고
+`factory_v5/scenarios/<scenario_id>/`에 FDS 결과와 NPZ만 분리한다. 변환 후
+`python3 run_fire_scenario.py <scenario_id> -- --no-thermal-window`로 동일한
+알고리즘을 실행한다.
 
 ## 3. factory_v5 파일과 폴더 설명
 
@@ -127,6 +132,8 @@ python3 pack_co_to_npz.py
 | `run_evacuation_2d.py` | 열화상 3-D ray 대신 얇은 2-D 온도 slice 관측을 시험하는 대체 실행 진입점 |
 | `validate_evacuation_setup.py` | FDS 범위, 지도 해상도, 시작점·요구조자·출구 좌표와 데이터 파일을 검사하는 도구 |
 | `prepare_temperature_npz.sh` | FDS TEMP_3D 결과를 runtime 온도 NPZ로 변환하는 실행 스크립트 |
+| `prepare_scenario_npz.sh` | 시나리오별 FDS 결과를 온도·CO runtime NPZ로 함께 변환하는 도구 |
+| `run_fire_scenario.py` | 시나리오 metadata를 검증하고 공통 v5 실행기에 해당 NPZ를 전달하는 진입점 |
 | `pack_temp3d_to_npz.py` | 온도 시계열을 `[time,z,y,x]` float32 NPZ로 저장하고 재검증하는 변환기 |
 | `pack_co_to_npz.py` | CO slice를 ppm 단위 `[time,y,x]` NPZ로 변환하는 도구 |
 | `record_simulation_replay.py` | 실제 계산 결과를 저장해 이후 일정한 속도로 재생할 수 있게 하는 recorder |
@@ -151,12 +158,13 @@ python3 pack_co_to_npz.py
 | `visualization/` | belief Costmap, 경로, 출구, 요구조자와 추정 화재를 표시하는 Pygame viewer |
 | `examples/` | Pygame/FDS 전체 실행 없이 개별 전략과 자료구조를 확인하는 예제 |
 | `tests/` | Costmap, A*, 출구 평가, 재계획, 탐색, 동행, 화재 추정과 통합 흐름의 단위·회귀 테스트 |
-| `processed/` | 실행에 사용하는 온도·CO NPZ 시계열 |
+| `processed/` | 이전 단일 시나리오 경로와 빈 폴더 호환성을 위한 위치 |
+| `scenarios/` | 화재 위치별 metadata, 원본 FDS 결과 및 runtime NPZ를 코드와 분리해 보관 |
 | `csv_temp3d/` | fds2ascii 방식 온도 변환에서 사용하는 임시 CSV 디렉터리 |
 | `output/` | 실제 이동 경로, replay 데이터와 시각화 결과 저장 위치 |
 | `scripts/` | 현재 SLAM 지도에서 v5 장애물 geometry를 재생성하는 도구 |
 | `validation/` | 지도 변환 hash, 회전 파라미터, geometry 검증 보고서와 overlay 이미지 |
 
 FDS가 생성하는 `.smv`, `.sf`, `.s3d` 등의 대용량 원본 결과는 runtime 알고리즘
-소스와 구분한다. 일반 시뮬레이션 실행에는 `processed/`의 검증된 NPZ가 있으면
+소스와 구분한다. 일반 시뮬레이션 실행에는 `scenarios/baseline/processed/`의 검증된 NPZ가 있으면
 되며, FDS 원본 결과는 NPZ를 다시 만들 때만 필요하다.

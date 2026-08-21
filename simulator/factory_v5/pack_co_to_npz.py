@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import argparse
 import tempfile
 import os
 
@@ -17,7 +18,23 @@ def main() -> int:
         raise RuntimeError("fdsreader is required to pack the CO result") from exc
 
     base = Path(__file__).resolve().parent
-    simulation = fds.Simulation(str(base))
+    baseline = base / "scenarios" / "baseline"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--fds-result-dir", type=Path, default=baseline / "fds_result",
+        help="directory containing exactly one FDS result set",
+    )
+    parser.add_argument(
+        "--output", type=Path,
+        default=baseline / "processed" / "fds_co_2d_timeseries.npz",
+        help="destination NPZ; parent directories are created",
+    )
+    args = parser.parse_args()
+    result_dir = args.fds_result_dir.resolve()
+    output = args.output.resolve()
+    if not result_dir.is_dir():
+        raise FileNotFoundError(f"FDS result directory not found: {result_dir}")
+    simulation = fds.Simulation(str(result_dir))
     slices = [item for item in simulation.slices if "CO_Z130" in str(item).upper()]
     if not slices:
         slices = [
@@ -49,7 +66,6 @@ def main() -> int:
     else:
         raise ValueError(f"unsupported CO unit: {unit!r}")
 
-    output = base / "processed" / "fds_co_2d_timeseries.npz"
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = None
     try:

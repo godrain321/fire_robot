@@ -97,6 +97,7 @@ class ExplorationManager:
     def plan_next_exit(
         self, world_state, current_position_world, *, cost_map,
         costmap_revision: int, created_at: float, phase: ExplorationPhase,
+        estimated_fire_map=None,
     ) -> ExplorationPlan:
         start = tuple(map(float, current_position_world))
         unchecked_exits = world_state.get_unchecked_exits()
@@ -123,15 +124,16 @@ class ExplorationManager:
                 "unchecked_exits_blocked_or_unsafe", failures, None,
             )
         dynamic = world_state.dynamic_obstacle_mask()
+        fire_map = estimated_fire_map or world_state.estimated_fire_map
         effective = cost_map.copy()
         effective[world_state.static_obstacle_map] = float("inf")
         effective[dynamic] = float("inf")
-        effective[world_state.estimated_fire_map.blocked_mask] = float("inf")
+        effective[fire_map.blocked_mask] = float("inf")
         plan = self.evacuation_planner.plan(
             unknown_exits, start, cost_map=effective,
             static_obstacle_map=world_state.static_obstacle_map,
             dynamic_obstacle_map=dynamic,
-            estimated_fire_map=world_state.estimated_fire_map,
+            estimated_fire_map=fire_map,
             created_at=created_at,
         )
         world_state.record_exit_evaluations(plan)

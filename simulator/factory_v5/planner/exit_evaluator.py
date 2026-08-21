@@ -117,6 +117,7 @@ class ExitEvaluation:
     unknown_ratio: float | None
     rejection_reasons: tuple[ExitRejectionReason, ...]
     evaluated_at: float
+    reference_waypoint_ids: tuple[str, ...] = tuple()
 
     def to_dict(self) -> dict[str, Any]:
         result = asdict(self)
@@ -139,13 +140,14 @@ class ExitEvaluator:
     def __init__(
         self, map_metadata, config: ExitEvaluationConfig, *,
         temperature_blocked_c: float, co_blocked_ppm: float,
-        base_cost: float,
+        base_cost: float, path_planner=None,
     ) -> None:
         self.metadata = map_metadata
         self.config = config
         self.temperature_blocked_c = float(temperature_blocked_c)
         self.co_blocked_ppm = float(co_blocked_ppm)
         self.base_cost = float(base_cost)
+        self.path_planner = path_planner or weighted_a_star
         if self.temperature_blocked_c < 0 or self.co_blocked_ppm < 0:
             raise ValueError("fire thresholds must be non-negative")
         if self.base_cost <= 0:
@@ -267,6 +269,7 @@ class ExitEvaluator:
             True, not reasons, path_world, path_grid, path_length, risk_cost,
             path_temp, path_co, exit_temp, exit_co, unknown_ratio,
             tuple(dict.fromkeys(reasons)), float(evaluated_at),
+            tuple(astar_result.reference_waypoint_ids),
         )
 
     def _validate_arrays(self, cost_map, static, dynamic, estimated):
@@ -313,7 +316,7 @@ class ExitEvaluator:
         for world, grid in candidates:
             if self._cell_failure(grid, costs, static, dynamic, estimated) is not None:
                 continue
-            result = weighted_a_star(costs, start, grid)
+            result = self.path_planner(costs, start, grid)
             if registered_approach:
                 return world, grid, result
             if result.path and (best is None or result.total_cost < best[2].total_cost):
@@ -399,4 +402,5 @@ class ExitEvaluator:
             tuple(exit_item.position_world), approach_world, approach_grid,
             False, False, tuple(), tuple(), None, None, None, None, None, None,
             None, tuple(dict.fromkeys(reasons)), float(evaluated_at),
+            tuple(),
         )

@@ -1,7 +1,8 @@
 fds_file: factory_v5.fds
 fds_result_chid: factory_v5_cat
-temperature_npz: processed/fds_temperature_3d_timeseries.npz
-co_npz: processed/fds_co_2d_timeseries.npz
+fds_result_dir: scenarios/baseline/fds_result
+temperature_npz: scenarios/baseline/processed/fds_temperature_3d_timeseries.npz
+co_npz: scenarios/baseline/processed/fds_co_2d_timeseries.npz
 # Simulation t=0 samples the saved FDS/NPZ fields at t=5 seconds.
 fds_start_time_s: 5.0
 
@@ -10,6 +11,29 @@ planner:
   # Keep planned cell centres at least 0.50 m from known occupied geometry so
   # the robot does not skim wall corners during shortcut turns.
   inflation_radius_m: 0.50
+
+# Measured ROS-map anchors used by the global reference graph planner.
+slam_reference_waypoints:
+  enabled: true
+  waypoint_file: config/slam_reference_waypoints.yaml
+  map_metadata_file: config/map_metadata.yaml
+
+# Global route selection uses only the measured anchors as graph nodes. Every
+# edge is reweighted/rejected using the latest sensor-derived final Costmap.
+reference_waypoint_graph:
+  enabled: true
+  neighbor_radius_m: 1.5
+  connector_search_radius_m: 3.0
+  connector_candidate_count: 8
+  fallback_to_cell_astar: false
+
+# Execute only measured YAML graph turns (for example w1 -> w7), while the
+# unchanged cell path and simplifier continue to provide safety validation and
+# start/goal connectors.
+reference_waypoint_execution:
+  enabled: true
+  direction_change_threshold_deg: 12.0
+  fallback_to_simplified_path: true
 
 # These objects exist in FDS/Smokeview but are deliberately absent from the
 # robot's initial Pygame/planner map. A future obstacle detector may add them
@@ -65,6 +89,15 @@ dynamic_obstacles: []
 human_detection_range_m: 10.0
 human_detection_horizontal_fov_deg: 100.0
 victim_approach_distance_m: 1.0
+
+# Exit exploration is interrupted only after an object's absolute world pose
+# changes inside this omnidirectional radius. The candidate is verified from
+# a stationary five-metre stand-off before entering the existing victim flow.
+moving_object_detection:
+  detection_range_m: 10.0
+  minimum_position_change_m: 0.05
+  candidate_stop_distance_m: 5.0
+  confirmation_wait_s: 3.0
 
 victim_following:
   enabled: true
@@ -196,6 +229,7 @@ map_overlays:
   show_detected_humans: true
   show_exit_states: true
   show_current_path: true
+  show_reference_waypoints: true
 
 # Exploration starts at robot_start and resumes at the robot's actual pose.
 # Entrance return is a separate completion policy and remains disabled until
@@ -211,6 +245,14 @@ exploration:
   replan_from_current_pose_on_resume: true
   return_to_entrance_when_complete: false
   return_entrance_exit_id: null
+
+# Costmap belief stays on the evacuation thresholds.  These settings only
+# build a temporary planner/validator view while MissionState is SEARCH_EXITS.
+search_planning:
+  temperature_block_c: 80.0
+  block_on_co: false
+  frontier_connectivity: 4
+  exit_temperature_radius_m: 1.0
 
 # These thresholds classify whether the robot has meaningful fire evidence.
 # They are intentionally higher than normal ambient readings and lower than

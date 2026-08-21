@@ -70,7 +70,11 @@ def main() -> int:
         "initial_robot_map_obstacle_count": len(planner_obstacles),
         "configured_points": point_report,
         "temperature_npz_exists": (base / scenario["temperature_npz"]).is_file(),
-        "result_smv_exists": (base / f"{scenario['fds_result_chid']}.smv").is_file(),
+        "result_smv_exists": (
+            base
+            / scenario.get("fds_result_dir", ".")
+            / f"{scenario['fds_result_chid']}.smv"
+        ).is_file(),
         "array_contracts": {
             "temperature_npz": "[time,z,y,x]",
             "camera_volume": "[z,y,x]",

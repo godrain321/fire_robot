@@ -270,13 +270,15 @@ class EvacuationStrategySelector:
 
     def __init__(
         self, map_metadata, hazard_tracker, return_planner, evacuation_planner,
-        config: EvacuationRouteSelectionConfig | None = None,
+        config: EvacuationRouteSelectionConfig | None = None, *,
+        path_planner=None,
     ) -> None:
         self.map_metadata = map_metadata
         self.hazard_tracker = hazard_tracker
         self.return_planner = return_planner
         self.evacuation_planner = evacuation_planner
         self.config = config or EvacuationRouteSelectionConfig()
+        self.path_planner = path_planner or weighted_a_star
 
     @staticmethod
     def _effective_cost(cost_map, static_map, dynamic_map, estimated_map):
@@ -412,7 +414,7 @@ class EvacuationStrategySelector:
             cost_map, world.static_obstacle_map,
             world.dynamic_obstacle_mask(), world.estimated_fire_map,
         )
-        result = weighted_a_star(effective, start, goal)
+        result = self.path_planner(effective, start, goal)
         if not result.path:
             return self._failure(
                 hazard, RouteFailureReason.ENTRANCE_PATH_UNAVAILABLE,

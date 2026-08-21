@@ -28,8 +28,8 @@ These files intentionally remain byte-identical to `factory_v3`:
 `run_partial_costmap_evacuation.py` uses the versioned sensor Ground Truth
 archives below and does not require raw FDS `.smv`, `.sf`, or `.s3d` files:
 
-- `processed/fds_temperature_3d_timeseries.npz`
-- `processed/fds_co_2d_timeseries.npz`
+- `scenarios/baseline/processed/fds_temperature_3d_timeseries.npz`
+- `scenarios/baseline/processed/fds_co_2d_timeseries.npz`
 
 Run the simulator from this directory with:
 
@@ -38,7 +38,7 @@ python3 run_partial_costmap_evacuation.py --no-thermal-window
 ```
 
 Raw FDS results are only needed when regenerating these archives. Use
-`prepare_temperature_npz.sh` for temperature and `pack_co_to_npz.py` for CO.
+`prepare_scenario_npz.sh` to generate both archives for a named scenario.
 The temperature helper reads the complete cell-centred FDS slice directly and
 therefore follows the actual result time range (currently 0..600 s) without
 creating hundreds of temporary CSV files.
@@ -99,11 +99,12 @@ export I_MPI_FABRICS=shm
 /home/park/FDS/FDS6/bin/fds_openmp factory_v5.fds
 ```
 
-After FDS completes, create both runtime archives:
+After FDS completes, create both baseline runtime archives. The second argument
+is the directory containing the raw `.smv`/slice result set:
 
 ```bash
-./prepare_temperature_npz.sh
-python3 pack_co_to_npz.py
+./prepare_scenario_npz.sh \
+  scenarios/baseline scenarios/baseline/fds_result factory_v5.fds
 ```
 
 `export_temp3d_all.sh` remains available as a slower diagnostic fallback. It
@@ -114,10 +115,37 @@ The packer sorts frame times numerically, requires a complete and identical
 Cartesian coordinate grid in every CSV, stores `temperature[time,z,y,x]`, and
 reopens a temporary NPZ to validate shape, dtype, sorted times, NaNs, minimum,
 and maximum. Only after successful validation is the temporary file atomically
-moved to `processed/fds_temperature_3d_timeseries.npz`; only the exact input
-files used from `csv_temp3d/` are then deleted. Use `--keep-csv` to retain them.
-The convenience `prepare_temperature_npz.sh` performs both commands with the
-same safety checks.
+moved to the selected scenario's `processed/fds_temperature_3d_timeseries.npz`;
+only the exact input files used from `csv_temp3d/` are then deleted. Use
+`--keep-csv` to retain them.
+
+## Multiple fire scenarios
+
+The simulator, planner, sensors, mission logic, and building geometry remain
+shared. Only FDS results and metadata are separated under
+`scenarios/<scenario_id>/`. See `scenarios/README.md` and copy
+`scenarios/template/` for a new case. Give every FDS case a unique CHID so raw
+outputs cannot overwrite one another.
+
+Convert one completed result set without changing any Python algorithm:
+
+```bash
+./prepare_scenario_npz.sh \
+  scenarios/fire_case_01 \
+  scenarios/fire_case_01/fds_result \
+  factory_v5.fds
+```
+
+Run it through the common simulation code, or validate paths with `--dry-run`:
+
+```bash
+python3 run_fire_scenario.py fire_case_01 -- --no-thermal-window
+python3 run_fire_scenario.py fire_case_01 --dry-run
+```
+
+`fire_position_world` is experiment truth for labeling and later error
+evaluation only. It is not passed to robot belief, Costmap, exit selection, or
+path planning.
 
 Validate paths and coordinates without result data:
 

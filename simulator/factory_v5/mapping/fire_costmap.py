@@ -170,7 +170,12 @@ def load_factory_geometry(
 
 
 def obstacles_for_initial_robot_map(obstacles, scenario) -> list[dict[str, Any]]:
-    """Exclude FDS-only objects until a robot-side detector reports them."""
+    """Exclude present FDS-only objects until a robot detector reports them.
+
+    Scenario variants may deliberately omit an optional object named by the
+    shared robot-map configuration. An absent object needs no exclusion and
+    must not prevent that scenario from starting.
+    """
     robot_map = scenario.get("robot_map", {})
     excluded = robot_map.get("initially_unobserved_fds_obstacle_ids", [])
     if not isinstance(excluded, list) or not all(
@@ -180,11 +185,8 @@ def obstacles_for_initial_robot_map(obstacles, scenario) -> list[dict[str, Any]]
             "robot_map.initially_unobserved_fds_obstacle_ids must be a list "
             "of non-empty strings"
         )
-    known_ids = {item.get("id") for item in obstacles}
-    missing = sorted(set(excluded) - known_ids)
-    if missing:
-        raise ValueError(f"unknown FDS obstacle IDs excluded from robot map: {missing}")
-    return [item for item in obstacles if item.get("id") not in set(excluded)]
+    excluded_ids = set(excluded)
+    return [item for item in obstacles if item.get("id") not in excluded_ids]
 
 
 def _nearest_indices(source: np.ndarray, target: np.ndarray) -> np.ndarray:

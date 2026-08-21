@@ -98,6 +98,7 @@ class MapOverlayConfig:
     show_detected_humans: bool = True
     show_exit_states: bool = True
     show_current_path: bool = True
+    show_reference_waypoints: bool = True
 
     @classmethod
     def from_mapping(cls, values):
@@ -158,12 +159,12 @@ class PygameSimulationViewer:
     RETURN_PATH = (220, 80, 245)
     NEW_OBSERVATION = (255, 235, 80)
     UNDETECTED_HUMAN = (155, 160, 170)
-    DETECTED_HUMAN = (255, 100, 100)
+    DETECTED_HUMAN = (100, 205, 255)
 
     def __init__(
         self, grid_map, config, title="Partial Costmap Evacuation",
         *, display_static_obstacle_map=None, perception_display_config=None,
-        overlay_config=None,
+        overlay_config=None, reference_waypoints_world=(),
     ) -> None:
         import pygame
 
@@ -194,8 +195,12 @@ class PygameSimulationViewer:
             perception_display_config or PerceptionMapDisplayConfig()
         )
         self.overlay_config = overlay_config or MapOverlayConfig()
+        self.reference_waypoints_world = self._validate_reference_waypoints(
+            reference_waypoints_world
+        )
         self._grid_surface_rect = self._make_grid_surface_rect()
         self._static_slam_surface = self._make_static_slam_surface()
+        self._reference_waypoint_surface = self._make_reference_waypoint_surface()
         self._costmap_surface = None
         self._costmap_surface_revision = None
         self._costmap_surface_build_count = 0
@@ -213,6 +218,34 @@ class PygameSimulationViewer:
         self.render_fps = int(getattr(config, "render_fps", 30))
         self.running = True
         self.paused = False
+
+    def _validate_reference_waypoints(self, points):
+        """Return finite, in-map world points without changing their order."""
+        result = []
+        for point in points:
+            if len(point) != 2:
+                raise ValueError("reference waypoint must be a world (x, y) pair")
+            x, y = float(point[0]), float(point[1])
+            if not (math.isfinite(x) and math.isfinite(y)):
+                raise ValueError("reference waypoint coordinates must be finite")
+            if not (
+                self.grid_map.x_min <= x <= self.grid_map.x_max
+                and self.grid_map.y_min <= y <= self.grid_map.y_max
+            ):
+                raise ValueError(f"reference waypoint outside map: {(x, y)}")
+            result.append((x, y))
+        return tuple(result)
+
+    def _make_reference_waypoint_surface(self):
+        """Cache the YAML reference points as a display-only overlay."""
+        surface = self.pygame.Surface(self.screen.get_size(), self.pygame.SRCALPHA)
+        if not self.overlay_config.show_reference_waypoints:
+            return surface
+        for x, y in self.reference_waypoints_world:
+            point = self.transform.world_to_screen(x, y)
+            self.pygame.draw.circle(surface, (20, 20, 20, 220), point, 4)
+            self.pygame.draw.circle(surface, (255, 255, 255, 255), point, 2)
+        return surface
 
     def process_events(self) -> tuple[bool, bool]:
         for event in self.pygame.event.get():
@@ -515,6 +548,11 @@ class PygameSimulationViewer:
             f"Path cost: {snapshot['path_cost']}",
             f"Status: {snapshot['status']}",
             f"Mission: {snapshot['mission_state']}",
+            f"Robot evacuated: {snapshot.get('robot_evacuated', False)}"
+            + (
+                "" if snapshot.get("robot_evacuated_exit_id") is None
+                else f" via {snapshot['robot_evacuated_exit_id']}"
+            ),
             f"Navigation: {snapshot['navigation_mode']}",
             f"Hazard knowledge: {snapshot.get('hazard_knowledge', 'UNDECIDED')}",
             f"Fire estimate: {snapshot.get('fire_estimate', 'UNOBSERVED')}",
@@ -635,6 +673,7 @@ class PygameSimulationViewer:
         self._draw_travel_and_return(
             travel_history, return_path, blocked_return_grid
         )
+        self.screen.blit(self._reference_waypoint_surface, (0, 0))
         if victim_following is not None and victim_following.position_world is not None:
             history = self._cached_screen_points(
                 "victim_pose_history",

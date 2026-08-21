@@ -418,6 +418,40 @@ class PartialFireCostmap:
         self.final_cost_map[self.blocked_mask] = np.inf
         self._validate_layers()
 
+    def planning_cost_map(
+        self, *, temperature_blocked_c: float,
+        block_on_co: bool,
+    ) -> np.ndarray:
+        """Return a mission-specific planning view without mutating belief.
+
+        All soft costs are exactly the layers used by ``final_cost_map``.  Only
+        the hard fire traversal policy is rebuilt; static and currently
+        perceived/inflated obstacles always remain blocked.
+        """
+        threshold = float(temperature_blocked_c)
+        if not math.isfinite(threshold) or threshold <= 0.0:
+            raise ValueError("temperature_blocked_c must be finite and positive")
+        result = (
+            self.config.base_cost
+            + self.temperature_cost_map
+            + self.co_cost_map
+            + self.unknown_cost_map
+            + self.estimated_fire_cost_map
+            + self.stale_observation_cost_map
+        ).copy()
+        blocked = self.static_obstacle_map | self.dynamic_inflated_obstacle_map
+        blocked |= (
+            self.temperature_observed_mask
+            & (self.temperature_belief_map >= threshold)
+        )
+        if block_on_co:
+            blocked |= (
+                self.co_observed_mask
+                & (self.co_belief_map >= self.config.co_blocked)
+            )
+        result[blocked] = np.inf
+        return result
+
     def _validate_layers(self) -> None:
         expected = self.shape
         names = (

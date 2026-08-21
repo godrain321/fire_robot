@@ -102,11 +102,20 @@ def test_overlay_settings_require_booleans():
         MapOverlayConfig(show_dynamic_obstacles=1)
 
 
+def test_reference_waypoint_overlay_is_enabled_and_boolean_validated():
+    assert MapOverlayConfig.from_mapping(
+        {"show_reference_waypoints": True}
+    ).show_reference_waypoints
+    with pytest.raises(TypeError):
+        MapOverlayConfig.from_mapping({"show_reference_waypoints": "true"})
+
+
 def test_human_marker_changes_color_after_detection():
     assert (
         PygameSimulationViewer.human_marker_color(False)
         != PygameSimulationViewer.human_marker_color(True)
     )
+    assert PygameSimulationViewer.human_marker_color(True) == (100, 205, 255)
 
 
 def test_planner_static_inflation_is_not_drawn_as_slam_wall():

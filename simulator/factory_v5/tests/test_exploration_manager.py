@@ -170,6 +170,40 @@ def test_exploration_mission_stall_retry_and_completion_states():
     assert mission.current_state is MissionState.EXPLORATION_COMPLETE
 
 
+def test_robot_evacuates_when_post_evacuation_exploration_is_stalled():
+    world, _, _ = make_system()
+    world.update_exit_status("SHORT_ASTAR", ExitStatus.USABLE)
+    world.mark_robot_evacuated(
+        "SHORT_ASTAR", (3, 6), sim_time=12,
+        maximum_distance_m=1.0, reason="all unchecked routes blocked",
+    )
+    assert world.robot_evacuated
+    assert world.robot_evacuated_exit_id == "SHORT_ASTAR"
+    assert world.robot_evacuated_at == 12
+
+    mission = MissionManager()
+    mission.handle_event(MissionEvent.EXPLORATION_STALLED, reason="no path")
+    mission.handle_event(
+        MissionEvent.ROBOT_EVACUATED, exit_id="SHORT_ASTAR", sim_time=12
+    )
+    assert mission.current_state is MissionState.ROBOT_EVACUATED
+
+
+def test_robot_escape_requires_usable_exit_and_exit_radius():
+    world, _, _ = make_system()
+    with pytest.raises(ValueError):
+        world.mark_robot_evacuated(
+            "SHORT_ASTAR", (3, 6), sim_time=1,
+            maximum_distance_m=1, reason="invalid",
+        )
+    world.update_exit_status("SHORT_ASTAR", ExitStatus.USABLE)
+    with pytest.raises(ValueError):
+        world.mark_robot_evacuated(
+            "SHORT_ASTAR", (0, 0), sim_time=1,
+            maximum_distance_m=1, reason="too far",
+        )
+
+
 def test_three_exits_are_reselected_from_each_actual_arrival_pose():
     metadata = MapMetadata(0, 8, 0, 8, 1, 9, 9, (0, 0))
     world = WorldState(metadata, np.zeros((9, 9), dtype=bool))

@@ -151,10 +151,18 @@ class WorldState:
         self.exploration_interruptions: list[ExplorationInterruption] = []
         self.exploration_stalled = False
         self.exploration_stall_reason: str | None = None
+        self.search_stage: str = "check_exits"
+        self.search_frontier_target_grid: tuple[int, int] | None = None
+        self.search_rechecked_exit_ids: set[str] = set()
+        self.search_exit_temperature_costs: dict[str, float | None] = {}
         self.active_following_victim_id: str | None = None
         self.victim_following_controller = None
         self.victim_following_config = None
         self.victim_following_events: list[dict[str, Any]] = []
+        self.robot_evacuated = False
+        self.robot_evacuated_exit_id: str | None = None
+        self.robot_evacuated_at: float | None = None
+        self.robot_evacuation_reason: str | None = None
 
     @classmethod
     def from_scenario(cls, scenario: dict[str, Any], grid_map, config) -> "WorldState":
@@ -316,6 +324,24 @@ class WorldState:
     def mark_exploration_stalled(self, reason: str) -> None:
         self.exploration_stalled = True
         self.exploration_stall_reason = str(reason)
+
+    def update_search_progress(
+        self, *, stage: str, frontier_target_grid=None,
+        rechecked_exit_id: str | None = None,
+        exit_temperature_cost: float | None = None,
+    ) -> None:
+        self.search_stage = str(stage)
+        self.search_frontier_target_grid = (
+            None if frontier_target_grid is None
+            else tuple(map(int, frontier_target_grid))
+        )
+        if rechecked_exit_id is not None:
+            self.get_exit(rechecked_exit_id)
+            self.search_rechecked_exit_ids.add(str(rechecked_exit_id))
+            self.search_exit_temperature_costs[str(rechecked_exit_id)] = (
+                None if exit_temperature_cost is None
+                else float(exit_temperature_cost)
+            )
 
     def clear_exploration_stall(self) -> None:
         self.exploration_stalled = False
@@ -774,7 +800,29 @@ class WorldState:
             self._validate_dynamic_obstacle(item)
 
     def legacy_humans(self) -> list[dict[str, Any]]:
-        return [{"id": item.victim_id, "x": item.position_world[0], "y": item.position_world[1]} for item in self.victims.values()]
+        """Return only people that remain inside the simulated building."""
+        return [
+            {"id": item.victim_id, "x": item.position_world[0],
+             "y": item.position_world[1]}
+            for item in self.victims.values() if not item.rescued
+        ]
+
+    def mark_robot_evacuated(
+        self, exit_id: str, robot_position_world, *, sim_time: float,
+        maximum_distance_m: float, reason: str,
+    ) -> None:
+        """Record terminal robot escape only at a confirmed usable exit."""
+        exit_item = self.get_exit(exit_id)
+        if exit_item.status is not ExitStatus.USABLE:
+            raise ValueError("robot may evacuate only through a USABLE exit")
+        position = tuple(float(value) for value in robot_position_world)
+        target = exit_item.approach_position_world or exit_item.position_world
+        if math.dist(position, target) > float(maximum_distance_m) + 1e-12:
+            raise ValueError("robot is not within the exit completion radius")
+        self.robot_evacuated = True
+        self.robot_evacuated_exit_id = exit_item.exit_id
+        self.robot_evacuated_at = float(sim_time)
+        self.robot_evacuation_reason = str(reason)
 
     def legacy_exits(self) -> list[dict[str, Any]]:
         result = []
@@ -865,6 +913,10 @@ class WorldState:
                 else self.victim_following_controller.to_dict()
             ),
             "victim_following_events": self.victim_following_events,
+            "robot_evacuated": self.robot_evacuated,
+            "robot_evacuated_exit_id": self.robot_evacuated_exit_id,
+            "robot_evacuated_at": self.robot_evacuated_at,
+            "robot_evacuation_reason": self.robot_evacuation_reason,
             "static_obstacle_map": self.static_obstacle_map,
             "known_occupancy_map": self.known_occupancy_map,
             "dynamic_obstacles": self.dynamic_obstacles,

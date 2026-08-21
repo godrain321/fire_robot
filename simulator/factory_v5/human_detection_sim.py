@@ -1,9 +1,110 @@
 # human_detection_sim.py
 
 import math
+from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional
 
 import numpy as np
+
+
+@dataclass(frozen=True)
+class MovingObjectDetectionConfig:
+    detection_range_m: float = 10.0
+    minimum_position_change_m: float = 0.05
+    candidate_stop_distance_m: float = 5.0
+    confirmation_wait_s: float = 3.0
+
+    def __post_init__(self):
+        for name in (
+            "detection_range_m", "minimum_position_change_m",
+            "candidate_stop_distance_m", "confirmation_wait_s",
+        ):
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or value <= 0.0:
+                raise ValueError(f"{name} must be finite and positive")
+        if self.candidate_stop_distance_m >= self.detection_range_m:
+            raise ValueError(
+                "candidate_stop_distance_m must be smaller than detection_range_m"
+            )
+
+    @classmethod
+    def from_mapping(cls, values):
+        values = dict(values or {})
+        unknown = set(values) - set(cls.__dataclass_fields__)
+        if unknown:
+            raise ValueError(
+                f"unknown moving_object_detection settings: {sorted(unknown)}"
+            )
+        return cls(**values)
+
+
+class MovingObjectDetector:
+    """Detect absolute world-position changes inside an omnidirectional radius."""
+
+    def __init__(self, config: MovingObjectDetectionConfig):
+        self.config = config
+        self._previous_positions: dict[str, tuple[float, float]] = {}
+
+    def update(
+        self, robot_position, objects, *, ignored_ids=(),
+        obstacle_map: Optional[np.ndarray] = None,
+        map_origin: Tuple[float, float] = (0.0, 0.0),
+        map_resolution: float = 0.1,
+    ):
+        robot = (float(robot_position[0]), float(robot_position[1]))
+        ignored = set(ignored_ids)
+        candidates = []
+        current_positions = {}
+        for item in objects:
+            object_id = str(item.get("id", "unknown"))
+            position = (float(item["x"]), float(item["y"]))
+            if not all(math.isfinite(value) for value in position):
+                continue
+            current_positions[object_id] = position
+            previous = self._previous_positions.get(object_id)
+            if previous is None or object_id in ignored:
+                continue
+            displacement = math.dist(previous, position)
+            distance = math.dist(robot, position)
+            if (
+                displacement + 1e-12
+                < self.config.minimum_position_change_m
+                or distance > self.config.detection_range_m
+            ):
+                continue
+            if obstacle_map is not None and SimpleHumanDetector._is_line_blocked(
+                self, start=robot, end=position,
+                obstacle_map=obstacle_map, map_origin=map_origin,
+                map_resolution=map_resolution,
+            ):
+                continue
+            candidates.append({
+                "id": object_id,
+                "x": position[0], "y": position[1],
+                "distance": distance,
+                "position_change_m": displacement,
+            })
+        self._previous_positions.update(current_positions)
+        candidates.sort(key=lambda item: (item["distance"], item["id"]))
+        return candidates
+
+
+def candidate_confirmation_ready(
+    distance_m: float, wait_started_at: float | None, simulation_time: float,
+    config: MovingObjectDetectionConfig,
+) -> bool:
+    """Return true only after a candidate stayed in range for the full wait."""
+    if wait_started_at is None:
+        return False
+    values = (float(distance_m), float(wait_started_at), float(simulation_time))
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("candidate confirmation inputs must be finite")
+    return (
+        distance_m <= config.candidate_stop_distance_m
+        and simulation_time >= wait_started_at
+        and simulation_time - wait_started_at + 1e-12
+        >= config.confirmation_wait_s
+    )
 
 
 class SimpleHumanDetector:

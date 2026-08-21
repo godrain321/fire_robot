@@ -1,0 +1,26 @@
+&HEAD CHID='factory_v5_machinery_0004_fire',
+      TITLE='factory_v5 fire scenario near V5_MACHINERY_0004' /
+
+&MESH IJK=141,112,15,
+      XB=1.8,30.0,5.6,28.0,0.0,3.0 /
+&TIME T_END=600 /
+&REAC FUEL='PROPANE', SOOT_YIELD=0.01, CO_YIELD=0.02,
+      HEAT_OF_COMBUSTION=46460. /
+
+&SURF ID='SLAM_WALL', COLOR='GRAY 30' /
+&SURF ID='OTHERS', COLOR='GRAY 70' /
+&SURF ID='NO_GO_WALL', COLOR='ORANGE' /
+&SURF ID='MACHINERY', COLOR='DARK GRAY' /
+&SURF ID='EXIT_SOLID', COLOR='BLUE' /
+
+! Reuse the unchanged factory_v5 geometry and blocker scenario. Only the
+! fire-specific records are supplied by this scenario directory.
+&CATF OTHER_FILES='../../generated/obstacles.inc','../../generated/exits.inc',
+      '../../config/exit_blockers.inc','fire.inc' /
+
+&DUMP DT_SLCF=1.0, DT_SL3D=1.0 /
+&SLCF ID='TEMP_3D', XB=1.8,30.0,5.6,28.0,0.0,3.0,
+      QUANTITY='TEMPERATURE', CELL_CENTERED=T /
+&SLCF ID='CO_Z130', PBZ=1.3, QUANTITY='VOLUME FRACTION',
+      SPEC_ID='CARBON MONOXIDE', CELL_CENTERED=T /
+&TAIL /

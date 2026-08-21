@@ -86,6 +86,8 @@ class AStarResult:
     reason: str
     escape_path: tuple[tuple[int, int], ...] = ()
     replan_start: tuple[int, int] | None = None
+    reference_waypoint_ids: tuple[str, ...] = ()
+    used_reference_graph: bool = False
 
 
 def weighted_a_star(cost_map, start, goal):

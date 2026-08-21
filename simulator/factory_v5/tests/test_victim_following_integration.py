@@ -88,3 +88,4 @@ def test_completion_records_identity_time_reason_and_clears_active_id():
     assert victim.evacuated_at == 8.5
     assert victim.evacuation_success_reason == "both at usable exit"
     assert world.active_following_victim_id is None
+    assert world.legacy_humans() == []

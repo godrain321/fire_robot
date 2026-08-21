@@ -15,7 +15,7 @@ from fds_temperature_io import axis_resolution, load_temperature_csv
 from mapping.fire_costmap import load_factory_geometry
 
 
-TIME_RE = re.compile(r"factory_v5_cat_temp_3d_t(\d+(?:\.\d+)?)\.csv$")
+TIME_RE = re.compile(r".+_temp_3d_t(\d+(?:\.\d+)?)\.csv$")
 
 
 def extract_time(path: Path) -> float:
@@ -143,22 +143,45 @@ def pack_direct_from_fds(
 
 def main() -> int:
     base = Path(__file__).resolve().parent
+    baseline = base / "scenarios" / "baseline"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--keep-csv", action="store_true", help="retain source CSV files")
     parser.add_argument(
         "--from-fds", action="store_true",
         help="read the complete cell-centred TEMP_3D slice directly with fdsreader",
     )
+    parser.add_argument(
+        "--fds-result-dir", type=Path, default=baseline / "fds_result",
+        help="directory containing one FDS result set",
+    )
+    parser.add_argument(
+        "--fds-file", type=Path, default=base / "factory_v5.fds",
+        help="FDS input used to obtain the authoritative MESH geometry",
+    )
+    parser.add_argument(
+        "--csv-dir", type=Path, default=base / "csv_temp3d",
+        help="directory containing *_temp_3d_t<time>.csv fallback frames",
+    )
+    parser.add_argument(
+        "--output", type=Path,
+        default=baseline / "processed" / "fds_temperature_3d_timeseries.npz",
+        help="destination NPZ; parent directories are created",
+    )
     args = parser.parse_args()
-    csv_dir = base / "csv_temp3d"
-    output = base / "processed" / "fds_temperature_3d_timeseries.npz"
-    fds_path = base / "factory_v5.fds"
+    csv_dir = args.csv_dir.resolve()
+    output = args.output.resolve()
+    fds_path = args.fds_file.resolve()
+    fds_result_dir = args.fds_result_dir.resolve()
+    if not fds_path.is_file():
+        raise FileNotFoundError(f"FDS input not found: {fds_path}")
+    if args.from_fds and not fds_result_dir.is_dir():
+        raise FileNotFoundError(f"FDS result directory not found: {fds_result_dir}")
     mesh_xb, _, _ = load_factory_geometry(fds_path)
     mesh_ijk = read_mesh_ijk(fds_path)
     mesh_tuple = tuple(float(value) for value in mesh_xb)
 
     if args.from_fds:
-        stats = pack_direct_from_fds(base, output, mesh_tuple)
+        stats = pack_direct_from_fds(fds_result_dir, output, mesh_tuple)
         print(f"Saved and verified directly from FDS: {output}")
         for key, value in stats.items():
             print(f"{key}: {value}")
