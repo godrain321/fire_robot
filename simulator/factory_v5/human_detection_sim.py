@@ -107,6 +107,27 @@ def candidate_confirmation_ready(
     )
 
 
+def candidate_standoff_position(
+    robot_position, candidate_position, stop_distance_m: float,
+) -> tuple[float, float]:
+    """Return the point on the robot side of a candidate's stand-off circle."""
+    robot = (float(robot_position[0]), float(robot_position[1]))
+    candidate = (float(candidate_position[0]), float(candidate_position[1]))
+    stop = float(stop_distance_m)
+    if not all(math.isfinite(value) for value in (*robot, *candidate, stop)):
+        raise ValueError("candidate stand-off inputs must be finite")
+    if stop < 0.0:
+        raise ValueError("stop_distance_m must be non-negative")
+    distance = math.dist(robot, candidate)
+    if distance <= stop + 1e-12 or distance <= 1e-12:
+        return robot
+    scale = stop / distance
+    return (
+        candidate[0] + (robot[0] - candidate[0]) * scale,
+        candidate[1] + (robot[1] - candidate[1]) * scale,
+    )
+
+
 class SimpleHumanDetector:
     """
     단순 요구조자 인식 모델

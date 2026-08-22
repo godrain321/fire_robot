@@ -25,14 +25,17 @@ reference_waypoint_graph:
   neighbor_radius_m: 1.5
   connector_search_radius_m: 3.0
   connector_candidate_count: 8
-  fallback_to_cell_astar: false
+  fallback_to_cell_astar: true
 
 # Execute only measured YAML graph turns (for example w1 -> w7), while the
 # unchanged cell path and simplifier continue to provide safety validation and
 # start/goal connectors.
 reference_waypoint_execution:
   enabled: true
+  # General path simplification remains at 12 degrees. Only turns extracted
+  # from the regular-spacing waypoint graph use the wider 50-degree threshold.
   direction_change_threshold_deg: 12.0
+  waypoint_turn_threshold_deg: 50.0
   fallback_to_simplified_path: true
 
 # These objects exist in FDS/Smokeview but are deliberately absent from the
@@ -41,6 +44,24 @@ reference_waypoint_execution:
 robot_map:
   initially_unobserved_fds_obstacle_ids:
     - EXIT1_FALLEN_STORAGE_RACK
+    # Scenario3 combustible props exist in FDS Ground Truth but are not part
+    # of the shared SLAM map. Thermal occlusion can add them through the
+    # dynamic-obstacle mapper after observation.
+    - SCENARIO3_CARDBOARD_001
+    - SCENARIO3_CARDBOARD_002
+    - SCENARIO3_CARDBOARD_003
+    - SCENARIO3_CARDBOARD_004
+    - SCENARIO3_CARDBOARD_005
+    - SCENARIO3_CARDBOARD_006
+    - SCENARIO3_CARDBOARD_007
+    - SCENARIO3_CARDBOARD_008
+    - SCENARIO3_CARDBOARD_009
+    - SCENARIO3_CARDBOARD_010
+    - SCENARIO3_CARDBOARD_011
+    - SCENARIO3_CARDBOARD_012
+    - SCENARIO3_CARDBOARD_013
+    - SCENARIO3_CARDBOARD_014
+    - SCENARIO3_CARDBOARD_015
 
 # TODO temporary: semantic INIT lies in the current inflated machinery mask.
 # This explicit nearby measured-free point is used instead; it is never moved
@@ -55,9 +76,9 @@ robot_start:
 robot_motion:
   linear_speed_mps: 1.3
   angular_speed_deg_s: 120.0
-  # Before the first exit A* request, move physically along the configured
-  # initial yaw. This is applied once and never repeated after replanning.
-  initial_forward_distance_m: 0.8
+  # Plan immediately from the configured start pose. The first physical
+  # motion follows the selected reference route toward w44.
+  initial_forward_distance_m: 0.0
 
 display:
   render_fps: 30
@@ -145,14 +166,15 @@ exit_evaluation:
   reject_dangerous_exit: true
   reject_path_over_threshold: true
   reject_invalid_cost: true
-  # Observation coverage confirms USABLE status but never rejects a route.
-  usable_confirmation_max_unknown_ratio: 0.5
-  # Risk cost excludes the base movement cost. The average is per metre.
-  # Unknown-only paths remain below these limits, while concentrated sensor
-  # risk can classify an exit as dangerous before a hard 60 C/1600 ppm block.
-  dangerous_accumulated_risk_cost: 150.0
-  dangerous_average_risk_cost: 10.0
-  dangerous_max_cell_risk_cost: 20.0
+  # Within this distance of the exit approach, a finite safe evaluation marks
+  # the exit USABLE. Observation coverage is not a confirmation condition.
+  usable_confirmation_distance_m: 3.0
+  # Risk remains a soft Weighted-A*/exit-ranking cost. A finite route is not
+  # rejected by accumulated, average, or single-cell soft risk; hard movement
+  # blocks still come from obstacles and the 60 C/1600 ppm thresholds.
+  dangerous_accumulated_risk_cost: null
+  dangerous_average_risk_cost: null
+  dangerous_max_cell_risk_cost: null
 
 exit_selection:
   prefer_confirmed_usable_exit: true
@@ -184,6 +206,17 @@ dynamic_obstacle_mapping:
   # obstacles. Their narrow configured XY quantization margin is ignored;
   # observations elsewhere continue through normal confirmation.
   ignored_fds_obstacle_ids:
+    - V3_EXIT1_0001
+    - V3_EXIT1_0002
+    - V3_EXIT1_0003
+    - V3_EXIT1_0004
+    - V3_EXIT1_0005
+    - V3_EXIT1_0006
+    - V3_EXIT1_0007
+    - V3_EXIT1_0008
+    - V3_EXIT1_0009
+    - V3_EXIT1_0010
+    - V3_EXIT1_0011
     - V3_EXIT2_0012
     - V3_EXIT2_0013
     - V3_EXIT2_0014
@@ -205,10 +238,9 @@ exit_blockage:
   consider_human_clearance: true
   human_clearance_m: 0.2
   exclude_blocked_exit_immediately: true
-  # EXIT2/EXIT3 have intentional FDS door meshes that thermal occlusion can
-  # otherwise misclassify as newly discovered obstacles. EXIT1 remains fully
-  # monitored so its fallen-rack blockage can still be detected.
-  ignored_exit_ids: [EXIT2, EXIT3]
+  # All exits have intentional FDS door meshes that thermal occlusion can
+  # otherwise misclassify as newly discovered obstacles.
+  ignored_exit_ids: [EXIT1, EXIT2, EXIT3]
 
 perception_map_display:
   unknown_color: [110, 110, 110]
@@ -265,6 +297,10 @@ hazard_knowledge:
 # slightly less convex temperature curve makes the developing EXIT2 fire
 # visible in planning costs before it reaches the hard 60 C movement block.
 sensor_costmap:
+  # Below these values temperature/CO do not influence route geometry, so
+  # Weighted A* behaves like shortest-path A* in otherwise traversable space.
+  temperature_cost_start_c: 40.0
+  co_cost_start_ppm: 100.0
   temperature_weight: 24.0
   temperature_power: 1.5
   co_weight: 8.0
@@ -324,14 +360,17 @@ evacuation_route_selection:
 
 exit_switching:
   enabled: true
+  # Five valid maximum-temperature samples must all rise strictly. The legacy
+  # cost ratio/absolute fields remain accepted for configuration compatibility
+  # but do not drive DANGER_EXPECTED.
   evaluation_window: 5
-  minimum_consecutive_increases: 3
+  minimum_consecutive_increases: 4
   minimum_increase_ratio: 0.10
   minimum_absolute_increase: 0.25
   minimum_direction_difference_deg: 90.0
   switch_cooldown_sec: 10.0
-  # After soft, sustained cost growth, travel one more metre toward the current
-  # exit before DANGER_EXPECTED/switch. Hard obstacle/thermal/CO blocks stop now.
+  # After five strictly rising route-temperature evaluations, travel one more
+  # metre before DANGER_EXPECTED/switch. Hard obstacle/thermal/CO blocks stop now.
   additional_travel_before_switch_m: 1.0
 
 path_validation:
@@ -368,8 +407,8 @@ replanning:
     ignore_same_reason_same_revision: true
 
 # The static planner map is already inflated by planner.inflation_radius_m.
-# Unknown cells remain traversable with PartialCostmap's explicit penalty;
-# exit evaluation independently enforces its stricter 0.5 route limit.
+# Unknown cells remain traversable without a path-cost penalty; observation
+# coverage remains available to search/frontier and remote exit confirmation.
 path_simplification:
   enabled: true
   extract_direction_changes: true

@@ -77,6 +77,38 @@ def a_star(grid_map, start, goal):
     return path
 
 
+class _FiniteCostmapGrid:
+    """Expose finite costmap cells through the occupancy-only A* interface."""
+
+    def __init__(self, cost_map):
+        self.costs = np.asarray(cost_map, dtype=float)
+
+    def is_blocked(self, node):
+        col, row = node
+        return (
+            row < 0 or col < 0
+            or row >= self.costs.shape[0] or col >= self.costs.shape[1]
+            or not math.isfinite(float(self.costs[row, col]))
+        )
+
+
+def unweighted_a_star(cost_map, start, goal):
+    """Run ordinary shortest-path A* using only finite/blocked cell state."""
+    costs = np.asarray(cost_map, dtype=float)
+    if costs.ndim != 2:
+        return AStarResult([], math.inf, "cost_map must be a 2-D array")
+    start = (int(start[0]), int(start[1]))
+    goal = (int(goal[0]), int(goal[1]))
+    path = a_star(_FiniteCostmapGrid(costs), start, goal)
+    if path is None:
+        return AStarResult([], math.inf, "no traversable unweighted A* path")
+    total = sum(
+        math.hypot(second[0] - first[0], second[1] - first[1])
+        for first, second in zip(path, path[1:])
+    )
+    return AStarResult(path, total, "unweighted cell A* path found")
+
+
 @dataclass(frozen=True)
 class AStarResult:
     """Weighted A* result with an explicit failure reason."""

@@ -19,6 +19,20 @@ def _wrap_angle(angle: float) -> float:
     return (angle + math.pi) % (2.0 * math.pi) - math.pi
 
 
+def shortest_rotation_delta(current_theta: float, target_theta: float) -> float:
+    """Return the smaller signed turn from current yaw to target yaw.
+
+    Positive is counter-clockwise and negative is clockwise. An exact 180
+    degree tie deterministically uses counter-clockwise rotation.
+    """
+    full_turn = 2.0 * math.pi
+    counter_clockwise = (float(target_theta) - float(current_theta)) % full_turn
+    clockwise = (float(current_theta) - float(target_theta)) % full_turn
+    if clockwise < counter_clockwise:
+        return -clockwise
+    return counter_clockwise
+
+
 class ReplannablePathFollower:
     """Follow world waypoints and atomically replace them after replanning."""
 
@@ -83,7 +97,7 @@ class ReplannablePathFollower:
             return distance, "waypoint reached"
 
         target_theta = math.atan2(dy, dx)
-        angle_error = _wrap_angle(target_theta - state.theta)
+        angle_error = shortest_rotation_delta(state.theta, target_theta)
         max_turn = self.config.robot_angular_speed * dt
         if abs(angle_error) > math.radians(1.0):
             state.theta = _wrap_angle(

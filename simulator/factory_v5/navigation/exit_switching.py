@@ -75,6 +75,70 @@ class CostTrendDecision:
     reason: str | None
 
 
+@dataclass(frozen=True)
+class RouteTemperatureSample:
+    costmap_revision: int
+    evaluated_at: float
+    maximum_temperature_c: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+class RouteTemperatureTrendMonitor:
+    """Trigger only when a full window of route temperatures rises."""
+
+    def __init__(self, evaluation_window: int = 5):
+        if isinstance(evaluation_window, bool) or evaluation_window < 2:
+            raise ValueError("evaluation_window must be an integer of at least 2")
+        self.evaluation_window = int(evaluation_window)
+        self._samples = deque(maxlen=self.evaluation_window)
+        self._last_revision = None
+
+    @property
+    def samples(self):
+        return tuple(self._samples)
+
+    def reset(self, _unused=None):
+        self._samples.clear()
+        self._last_revision = None
+
+    def record(self, path_grid, temperature_map, *, revision, evaluated_at):
+        if self._last_revision == int(revision):
+            return CostTrendDecision(False, 0, None, None, None)
+        self._last_revision = int(revision)
+        values = []
+        temperatures = np.asarray(temperature_map, dtype=float)
+        for col, row in dict.fromkeys(
+            cell for start, end in zip(path_grid, path_grid[1:])
+            for cell in cells_touched_by_segment(start, end)
+        ):
+            if 0 <= row < temperatures.shape[0] and 0 <= col < temperatures.shape[1]:
+                value = float(temperatures[row, col])
+                if math.isfinite(value):
+                    values.append(value)
+        if not values:
+            return CostTrendDecision(False, 0, None, None, None)
+        maximum = max(values)
+        self._samples.append(RouteTemperatureSample(
+            int(revision), float(evaluated_at), maximum,
+        ))
+        samples = tuple(self._samples)
+        consecutive = sum(
+            current.maximum_temperature_c > previous.maximum_temperature_c + 1e-12
+            for previous, current in zip(samples, samples[1:])
+        )
+        required = (
+            len(samples) == self.evaluation_window
+            and consecutive == self.evaluation_window - 1
+        )
+        reason = None if not required else (
+            "sustained_route_temperature_increase:"
+            + "->".join(f"{item.maximum_temperature_c:.3f}" for item in samples)
+        )
+        return CostTrendDecision(required, consecutive, None, maximum, reason)
+
+
 @dataclass
 class DelayedCostSwitch:
     """Delay a soft cost-driven switch by actual robot travel distance."""

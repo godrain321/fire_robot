@@ -125,6 +125,8 @@ class WorldState:
         self.route_cost_baseline: float | None = None
         self.route_cost_history: list[Any] = []
         self.consecutive_route_cost_increases = 0
+        self.route_temperature_history: list[Any] = []
+        self.consecutive_route_temperature_increases = 0
         self.route_costmap_revision: int | None = None
         self.exit_switch_occurred = False
         self.previous_target_exit_id: str | None = None
@@ -489,6 +491,11 @@ class WorldState:
         self.route_cost_baseline = None if baseline is None else float(baseline)
         self.route_cost_history.append(sample)
         self.consecutive_route_cost_increases = int(consecutive)
+        self.route_costmap_revision = int(sample.costmap_revision)
+
+    def record_route_temperature(self, sample, *, consecutive: int) -> None:
+        self.route_temperature_history.append(sample)
+        self.consecutive_route_temperature_increases = int(consecutive)
         self.route_costmap_revision = int(sample.costmap_revision)
 
     def record_exit_switch(
@@ -895,6 +902,10 @@ class WorldState:
             "route_cost_baseline": self.route_cost_baseline,
             "route_cost_history": self.route_cost_history,
             "consecutive_route_cost_increases": self.consecutive_route_cost_increases,
+            "route_temperature_history": self.route_temperature_history,
+            "consecutive_route_temperature_increases": (
+                self.consecutive_route_temperature_increases
+            ),
             "route_costmap_revision": self.route_costmap_revision,
             "exit_switch_occurred": self.exit_switch_occurred,
             "previous_target_exit_id": self.previous_target_exit_id,

@@ -25,7 +25,7 @@ class ReferenceWaypointGraphConfig:
     neighbor_radius_m: float = 1.5
     connector_search_radius_m: float = 3.0
     connector_candidate_count: int = 8
-    fallback_to_cell_astar: bool = False
+    fallback_to_cell_astar: bool = True
 
     def __post_init__(self) -> None:
         for name in ("enabled", "fallback_to_cell_astar"):
@@ -149,23 +149,50 @@ class ReferenceWaypointGraphPlanner:
 
     def plan(self, cost_map, start, goal):
         costs = np.asarray(cost_map, dtype=float)
-        if not self.config.enabled:
-            return weighted_a_star(costs, start, goal)
         if costs.ndim != 2:
             return AStarResult([], math.inf, "cost_map must be a 2-D array")
         start = (int(start[0]), int(start[1]))
         goal = (int(goal[0]), int(goal[1]))
+        if start == goal:
+            print(f"[Planner] ALREADY_AT_GOAL start={start} goal={goal}")
+            return AStarResult(
+                [start], 0.0, "ALREADY_AT_GOAL",
+                reference_waypoint_ids=tuple(), used_reference_graph=False,
+            )
+        if not self.config.enabled:
+            result = weighted_a_star(costs, start, goal)
+            label = "CELL_ASTAR_PATH" if result.path else "TRUE_NO_PATH"
+            print(f"[Planner] {label} path_length={len(result.path)}")
+            return result
         if not self._valid_cell(costs, start):
             return AStarResult([], math.inf, "start is blocked")
         if not self._valid_cell(costs, goal):
             return AStarResult([], math.inf, "goal is blocked")
-        start_links = self._connectors(costs, start)
         goal_links = self._connectors(costs, goal, reverse=True)
-        if not start_links or not goal_links:
+        if not goal_links:
             return self._fallback(costs, start, goal, "reference connector unavailable")
+
+        start_anchor = next(
+            (index for index, waypoint in enumerate(self.waypoints)
+             if waypoint.factory_grid == start),
+            None,
+        )
+        start_is_reference = start_anchor is not None
+        if start_anchor is None:
+            start_anchor = min(
+                range(len(self.waypoints)),
+                key=lambda index: (
+                    math.hypot(
+                        self.waypoints[index].factory_grid[0] - start[0],
+                        self.waypoints[index].factory_grid[1] - start[1],
+                    ),
+                    self.waypoints[index].waypoint_id,
+                ),
+            )
 
         adjacency = {index: [] for index in range(len(self.waypoints))}
         edge_paths = {}
+        edge_costs = {}
         for first, second, distance in self._candidate_edges:
             evaluated = self._edge(costs, first, second, distance)
             if evaluated is None:
@@ -175,14 +202,12 @@ class ReferenceWaypointGraphPlanner:
             adjacency[second].append((first, cost))
             edge_paths[(first, second)] = path
             edge_paths[(second, first)] = tuple(reversed(path))
+            edge_costs[(first, second)] = cost
+            edge_costs[(second, first)] = cost
 
-        frontier = []
-        distance_so_far = {}
-        parent = {}
-        for index, connector in start_links.items():
-            distance_so_far[index] = float(connector.total_cost)
-            parent[index] = None
-            heapq.heappush(frontier, (float(connector.total_cost), index))
+        frontier = [(0.0, start_anchor)]
+        distance_so_far = {start_anchor: 0.0}
+        parent = {start_anchor: None}
         best_goal = None
         best_total = math.inf
         while frontier:
@@ -211,23 +236,67 @@ class ReferenceWaypointGraphPlanner:
             anchors.append(current)
             current = parent[current]
         anchors.reverse()
+
+        execution_anchors = anchors
         path = []
-        _append_path(path, start_links[anchors[0]].path)
-        for first, second in zip(anchors, anchors[1:]):
+        if start_is_reference:
+            _append_path(path, (start,))
+        else:
+            if len(anchors) < 2:
+                return self._fallback(
+                    costs, start, goal, "single reference anchor",
+                )
+            execution_anchors = anchors[1:]
+            second_grid = self.waypoints[execution_anchors[0]].factory_grid
+            connector = weighted_a_star(costs, start, second_grid)
+            if not connector.path:
+                return self._fallback(
+                    costs, start, goal,
+                    "second reference waypoint connector unavailable",
+                )
+            _append_path(path, connector.path)
+        for first, second in zip(execution_anchors, execution_anchors[1:]):
             _append_path(path, edge_paths[(first, second)])
-        _append_path(path, goal_links[anchors[-1]].path)
-        return AStarResult(
-            path, float(best_total), "reference waypoint graph path found",
+        _append_path(path, goal_links[execution_anchors[-1]].path)
+        total_cost = (
+            (0.0 if start_is_reference else float(connector.total_cost))
+            + sum(
+                edge_costs[(first, second)]
+                for first, second in zip(
+                    execution_anchors, execution_anchors[1:]
+                )
+            )
+            + float(goal_links[execution_anchors[-1]].total_cost)
+        )
+        result = AStarResult(
+            path, total_cost, "reference waypoint graph path found",
             reference_waypoint_ids=tuple(
-                self.waypoints[index].waypoint_id for index in anchors
+                self.waypoints[index].waypoint_id for index in execution_anchors
             ),
             used_reference_graph=True,
         )
+        print(f"[Planner] WAYPOINT_GRAPH_PATH path_length={len(result.path)}")
+        return result
 
     def _fallback(self, costs, start, goal, graph_reason):
         if not self.config.fallback_to_cell_astar:
             return AStarResult([], math.inf, graph_reason)
+        print(
+            f"[Planner] WAYPOINT_GRAPH_FAILED reason={graph_reason} "
+            "-> trying weighted cell A*"
+        )
+        print("[Planner] CELL_ASTAR_FALLBACK")
         result = weighted_a_star(costs, start, goal)
+        if result.path:
+            print(
+                "[Planner] CELL_ASTAR_PATH "
+                f"path_length={len(result.path)}"
+            )
+        else:
+            print(
+                "[Planner] TRUE_NO_PATH "
+                f"graph_reason={graph_reason} cell_reason={result.reason}"
+            )
         return AStarResult(
             result.path, result.total_cost,
             f"{graph_reason}; cell A* fallback: {result.reason}",

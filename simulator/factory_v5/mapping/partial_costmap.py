@@ -15,9 +15,11 @@ from mapping.grid_map import GridMap
 class PartialCostmapConfig(FireCostmapConfig):
     """All stage-2 mapping, sensing, replanning and motion settings."""
 
-    unknown_penalty: float = 2.0
-    unobserved_temperature_penalty: float = 1.0
-    unobserved_co_penalty: float = 1.0
+    # Observation coverage is mission knowledge, not a traversal cost. Exit
+    # selection may still prefer a confirmed USABLE exit over UNKNOWN exits.
+    unknown_penalty: float = 0.0
+    unobserved_temperature_penalty: float = 0.0
+    unobserved_co_penalty: float = 0.0
     replan_interval_seconds: float = 1.0
     replan_distance: float = 0.0
     sensor_update_interval_seconds: float = 0.25

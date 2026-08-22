@@ -6,6 +6,7 @@ import pytest
 
 from planner.exit_evaluator import (
     ExitEvaluationConfig, ExitEvaluator, ExitRejectionReason,
+    within_usable_confirmation_distance,
 )
 from world.entities import Exit, ExitStatus
 from world.fire_maps import EstimatedFireMap, MapMetadata
@@ -27,6 +28,12 @@ def evaluator(metadata, **settings):
         metadata, ExitEvaluationConfig(**settings),
         temperature_blocked_c=60, co_blocked_ppm=1600, base_cost=1,
     )
+
+
+def test_usable_confirmation_distance_is_three_metres_without_coverage_gate():
+    config = ExitEvaluationConfig(usable_confirmation_distance_m=3.0)
+    assert within_usable_confirmation_distance((0, 0), (3, 0), config)
+    assert not within_usable_confirmation_distance((0, 0), (3.01, 0), config)
 
 
 def evaluate(item, start=(0, 0), **changes):
@@ -158,7 +165,7 @@ def test_path_fire_thresholds(kind, value, reason):
         assert reason in result.rejection_reasons
 
 
-def test_exit_neighborhood_risk_and_unknown_ratio_is_informational():
+def test_exit_neighborhood_risk_and_unknown_ratio_is_informational_only():
     item = Exit("E", (4, 0), (4, 0))
     hot, *_ = evaluate(item, temperature=((1, 4), 70))
     assert ExitRejectionReason.TEMPERATURE_LIMIT_EXCEEDED in hot.rejection_reasons
@@ -189,7 +196,7 @@ def test_config_validation():
     for kwargs in (
         {"exit_neighborhood_radius_m": -1},
         {"approach_search_radius_m": 0},
-        {"usable_confirmation_max_unknown_ratio": 1.1},
+        {"usable_confirmation_distance_m": 0.0},
         {"dangerous_average_risk_cost": 0},
         {"dangerous_max_cell_risk_cost": np.inf},
     ):

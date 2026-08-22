@@ -6,6 +6,7 @@ import pytest
 
 from navigation.exit_switching import (
     DelayedCostSwitch, ExitSwitchingConfig, RouteCostTrendMonitor,
+    RouteTemperatureTrendMonitor,
     current_direction_world,
     evaluate_path_cost, is_opposite_direction,
 )
@@ -28,6 +29,33 @@ def test_single_cost_rise_does_not_switch_but_sustained_rise_does():
     assert not decisions[1].switch_required
     assert decisions[-1].switch_required
     assert decisions[-1].consecutive_increases == 3
+
+
+def test_five_strictly_increasing_route_temperatures_trigger_switch():
+    monitor = RouteTemperatureTrendMonitor(5)
+    path = ((0, 0), (2, 0))
+    decisions = [
+        monitor.record(
+            path, np.full((3, 3), value),
+            revision=revision, evaluated_at=revision,
+        )
+        for revision, value in enumerate((20, 21, 22, 23, 24), start=1)
+    ]
+    assert not any(item.switch_required for item in decisions[:-1])
+    assert decisions[-1].switch_required
+    assert decisions[-1].consecutive_increases == 4
+
+
+def test_temperature_plateau_breaks_five_sample_increase():
+    monitor = RouteTemperatureTrendMonitor(5)
+    path = ((0, 0), (2, 0))
+    decision = None
+    for revision, value in enumerate((20, 21, 21, 22, 23), start=1):
+        decision = monitor.record(
+            path, np.full((3, 3), value),
+            revision=revision, evaluated_at=revision,
+        )
+    assert decision is not None and not decision.switch_required
 
 
 def test_same_revision_is_not_counted_twice_and_reset_clears_trend():

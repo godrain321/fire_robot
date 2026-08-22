@@ -58,7 +58,7 @@ def plan(belief, start=(0, 3), goal=(6, 3)):
     )
 
 
-def test_initial_unknown_map_still_produces_path():
+def test_initial_unknown_map_has_no_traversal_penalty_and_produces_path():
     _, config, belief = make_belief()
 
     result = plan(belief)
@@ -68,8 +68,40 @@ def test_initial_unknown_map_still_produces_path():
     assert np.isnan(belief.co_belief_map).all()
     assert np.allclose(
         belief.final_cost_map,
-        config.base_cost + config.unknown_penalty,
+        config.base_cost,
     )
+    assert config.unknown_penalty == 0.0
+    assert config.unobserved_temperature_penalty == 0.0
+    assert config.unobserved_co_penalty == 0.0
+
+
+def test_fire_cost_dead_zone_preserves_shortest_path_cost_below_thresholds():
+    _, config, belief = make_belief(
+        temperature_safe=40.0,
+        co_safe=100.0,
+    )
+    thermal_update(belief, [ray_at(2, 2, 39.9)], 39.9, sim_time=1.0)
+    belief.co_belief_map[2, 2] = 99.9
+    belief.co_observed_mask[2, 2] = True
+    belief.recalculate()
+
+    assert belief.temperature_cost_map[2, 2] == 0.0
+    assert belief.co_cost_map[2, 2] == 0.0
+    assert belief.final_cost_map[2, 2] == config.base_cost
+
+
+def test_fire_cost_starts_above_configured_thresholds():
+    _, _, belief = make_belief(
+        temperature_safe=40.0,
+        co_safe=100.0,
+    )
+    thermal_update(belief, [ray_at(2, 2, 41.0)], 41.0, sim_time=1.0)
+    belief.co_belief_map[2, 2] = 101.0
+    belief.co_observed_mask[2, 2] = True
+    belief.recalculate()
+
+    assert belief.temperature_cost_map[2, 2] > 0.0
+    assert belief.co_cost_map[2, 2] > 0.0
 
 
 def test_observation_age_adds_bounded_soft_uncertainty_cost():

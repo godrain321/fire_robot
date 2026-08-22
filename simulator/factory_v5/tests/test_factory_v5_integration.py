@@ -108,6 +108,45 @@ def test_optional_unobserved_obstacle_may_be_absent_from_scenario():
     assert obstacles_for_initial_robot_map(obstacles, scenario) == obstacles
 
 
+def test_scenario3_omits_exit1_fallen_storage_rack():
+    _, obstacles, _ = load_factory_geometry(
+        BASE / "scenarios" / "scenario3" / "scenario3.fds"
+    )
+    assert not any(
+        item.get("id") == "EXIT1_FALLEN_STORAGE_RACK" for item in obstacles
+    )
+
+
+def test_exit1_door_meshes_are_ignored_by_dynamic_blockage_detection():
+    scenario = yaml.safe_load(
+        (BASE / "config" / "evacuation.yaml").read_text(encoding="utf-8")
+    )
+    ignored_meshes = set(
+        scenario["dynamic_obstacle_mapping"]["ignored_fds_obstacle_ids"]
+    )
+    assert {
+        f"V3_EXIT1_{index:04d}" for index in range(1, 12)
+    } <= ignored_meshes
+    assert "EXIT1" in scenario["exit_blockage"]["ignored_exit_ids"]
+
+
+def test_scenario3_fds_props_do_not_block_shared_victim_waypoint():
+    scenario = yaml.safe_load(
+        (BASE / "config" / "evacuation.yaml").read_text(encoding="utf-8")
+    )
+    mesh, obstacles, holes = load_factory_geometry(
+        BASE / "scenarios" / "scenario3" / "scenario3.fds"
+    )
+    planner_obstacles = obstacles_for_initial_robot_map(obstacles, scenario)
+    assert not any(
+        (item.get("id") or "").startswith("SCENARIO3_CARDBOARD_")
+        for item in planner_obstacles
+    )
+    grid = GridMap(mesh, planner_obstacles, holes, 0.2, 0.5)
+    waypoint = scenario["humans"][0]["scripted_motion"]["waypoints_world"][1]
+    assert not grid.is_blocked(grid.world_to_grid(*waypoint))
+
+
 def test_world_grid_roundtrip_and_boundaries():
     mesh, _, grid, _ = _scenario_grid()
     for x, y in (

@@ -786,6 +786,13 @@ class PygameSimulationViewer:
     def close(self):
         self.pygame.quit()
 
+    def wait_until_closed(self):
+        """Keep the final rendered frame visible until the user closes it."""
+        while self.running:
+            self.process_events()
+            self.clock.tick(30)
+        self.close()
+
 
 class MatplotlibThermalViewer:
     """Thermal image viewer that consumes raw Celsius arrays only."""

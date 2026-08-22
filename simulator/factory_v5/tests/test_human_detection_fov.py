@@ -5,7 +5,7 @@ import pytest
 
 from human_detection_sim import (
     MovingObjectDetectionConfig, MovingObjectDetector, SimpleHumanDetector,
-    candidate_confirmation_ready,
+    candidate_confirmation_ready, candidate_standoff_position,
 )
 
 
@@ -94,3 +94,11 @@ def test_candidate_requires_five_metre_standoff_and_full_three_second_wait():
     assert not candidate_confirmation_ready(5.1, 1.0, 4.0, config)
     assert not candidate_confirmation_ready(5.0, 1.0, 3.9, config)
     assert candidate_confirmation_ready(5.0, 1.0, 4.0, config)
+
+
+def test_candidate_approach_targets_five_metre_standoff_not_occupied_cell():
+    target = candidate_standoff_position((0.0, 0.0), (10.0, 0.0), 5.0)
+    assert target == pytest.approx((5.0, 0.0))
+    assert candidate_standoff_position(
+        (6.0, 0.0), (10.0, 0.0), 5.0
+    ) == pytest.approx((6.0, 0.0))

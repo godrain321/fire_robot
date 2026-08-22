@@ -41,7 +41,7 @@ class ExitEvaluationConfig:
     reject_dangerous_exit: bool = True
     reject_path_over_threshold: bool = True
     reject_invalid_cost: bool = True
-    usable_confirmation_max_unknown_ratio: float = 0.5
+    usable_confirmation_distance_m: float = 3.0
     dangerous_accumulated_risk_cost: float | None = None
     dangerous_average_risk_cost: float | None = None
     dangerous_max_cell_risk_cost: float | None = None
@@ -63,9 +63,13 @@ class ExitEvaluationConfig:
             raise ValueError("exit_neighborhood_radius_m must be non-negative")
         if self.approach_search_radius_m <= 0:
             raise ValueError("approach_search_radius_m must be positive")
-        if not 0.0 <= self.usable_confirmation_max_unknown_ratio <= 1.0:
+        if (
+            isinstance(self.usable_confirmation_distance_m, bool)
+            or not math.isfinite(float(self.usable_confirmation_distance_m))
+            or self.usable_confirmation_distance_m <= 0.0
+        ):
             raise ValueError(
-                "usable_confirmation_max_unknown_ratio must be in [0,1]"
+                "usable_confirmation_distance_m must be finite and positive"
             )
         for name in (
             "dangerous_accumulated_risk_cost",
@@ -134,6 +138,21 @@ class ExitEvaluation:
         result["path_grid"] = [list(item) for item in self.path_grid]
         result["rejection_reasons"] = [item.value for item in self.rejection_reasons]
         return result
+
+
+def within_usable_confirmation_distance(
+    robot_position_world, exit_approach_world, config: ExitEvaluationConfig,
+) -> bool:
+    """Return whether the robot is close enough for direct USABLE confirmation."""
+    robot = tuple(float(value) for value in robot_position_world)
+    approach = tuple(float(value) for value in exit_approach_world)
+    if len(robot) != 2 or len(approach) != 2 or not all(
+        math.isfinite(value) for value in (*robot, *approach)
+    ):
+        raise ValueError("confirmation positions must be finite (x, y) points")
+    return math.dist(robot, approach) <= (
+        config.usable_confirmation_distance_m + 1e-12
+    )
 
 
 class ExitEvaluator:
