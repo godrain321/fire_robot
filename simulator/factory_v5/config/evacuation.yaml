@@ -210,29 +210,7 @@ dynamic_obstacle_mapping:
   # These are intentional EXIT_SOLID door meshes, not newly introduced
   # obstacles. Their narrow configured XY quantization margin is ignored;
   # observations elsewhere continue through normal confirmation.
-  ignored_fds_obstacle_ids:
-    - V3_EXIT1_0001
-    - V3_EXIT1_0002
-    - V3_EXIT1_0003
-    - V3_EXIT1_0004
-    - V3_EXIT1_0005
-    - V3_EXIT1_0006
-    - V3_EXIT1_0007
-    - V3_EXIT1_0008
-    - V3_EXIT1_0009
-    - V3_EXIT1_0010
-    - V3_EXIT1_0011
-    - V3_EXIT2_0012
-    - V3_EXIT2_0013
-    - V3_EXIT2_0014
-    - V3_EXIT2_0015
-    - V3_EXIT3_0016
-    - V3_EXIT3_0017
-    - V3_EXIT3_0018
-    - V3_EXIT3_0019
-    - V3_EXIT3_0020
-    - V3_EXIT3_0021
-    - V3_EXIT3_0022
+  ignored_fds_obstacle_ids: []
 
 exit_blockage:
   enabled: true
@@ -347,7 +325,9 @@ fire_localization:
   evidence_decay_per_second: 0.001
   candidate_probability_threshold: 0.50
   maximum_confirmed_region_cells: 250
-  estimated_fire_cost_weight: 50.0
+  # Keep localization/probability visualization, but do not add inferred-fire
+  # probability to navigation cost. Direct temperature and CO costs remain.
+  estimated_fire_cost_weight: 0.0
   co_projection_distance_m: 4.0
   co_projection_half_angle_deg: 15.0
 
@@ -363,16 +343,16 @@ evacuation_route_selection:
 exit_switching:
   enabled: true
   # Start DANGER_EXPECTED trend evaluation only after the remaining forward
-  # route contains an observed cell at or above 40 C. Six route evaluations
-  # must then contain five strictly consecutive average-cost increases.
-  danger_expected_min_temperature_c: 40.0
-  evaluation_window: 6
-  minimum_consecutive_increases: 5
+  # route contains an observed cell at or above 60 C. Five route evaluations
+  # must then contain four strictly consecutive average-cost increases.
+  danger_expected_min_temperature_c: 60.0
+  evaluation_window: 5
+  minimum_consecutive_increases: 4
   minimum_increase_ratio: 0.10
   minimum_absolute_increase: 0.25
   minimum_direction_difference_deg: 90.0
   switch_cooldown_sec: 10.0
-  # After five strictly rising route-cost transitions, travel one more
+  # After four strictly rising route-cost transitions, travel one more
   # metre before DANGER_EXPECTED/switch. Hard obstacle/thermal/CO blocks stop now.
   additional_travel_before_switch_m: 1.0
 

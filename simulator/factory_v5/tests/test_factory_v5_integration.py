@@ -117,20 +117,17 @@ def test_scenario3_omits_exit1_fallen_storage_rack():
     )
 
 
-def test_exit1_door_meshes_are_ignored_by_dynamic_blockage_detection():
+def test_exit_solid_meshes_are_absent_from_factory_v5_source_geometry():
     scenario = yaml.safe_load(
         (BASE / "config" / "evacuation.yaml").read_text(encoding="utf-8")
     )
-    ignored_meshes = set(
-        scenario["dynamic_obstacle_mapping"]["ignored_fds_obstacle_ids"]
+    _, obstacles, _ = load_factory_geometry(BASE / "factory_v5.fds")
+    assert not any(
+        (item.get("id") or "").startswith(("V3_EXIT1_", "V3_EXIT2_", "V3_EXIT3_"))
+        for item in obstacles
     )
-    assert {
-        f"V3_EXIT1_{index:04d}" for index in range(1, 12)
-    } <= ignored_meshes
-    # Door meshes are filtered individually; the whole exit must still be
-    # evaluated so a novel rack or other observed obstacle can block it.
+    assert scenario["dynamic_obstacle_mapping"]["ignored_fds_obstacle_ids"] == []
     assert "ignored_exit_ids" not in scenario["exit_blockage"]
-    assert "EXIT1_FALLEN_STORAGE_RACK" not in ignored_meshes
 
 
 def test_scenario3_fds_props_do_not_block_shared_victim_waypoint():

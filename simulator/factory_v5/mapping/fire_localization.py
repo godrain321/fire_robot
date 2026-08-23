@@ -57,7 +57,7 @@ class FireLocalizationConfig:
     evidence_decay_per_second: float = 0.001
     candidate_probability_threshold: float = 0.50
     maximum_confirmed_region_cells: int = 250
-    estimated_fire_cost_weight: float = 50.0
+    estimated_fire_cost_weight: float = 0.0
     co_projection_distance_m: float = 4.0
     co_projection_half_angle_deg: float = 15.0
 

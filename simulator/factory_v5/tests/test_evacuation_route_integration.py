@@ -69,9 +69,9 @@ def test_stage6_yaml_sections_load():
     assert scenario["hazard_knowledge"]["temperature_elevated_c"] == 35.0
     assert scenario["hazard_knowledge"]["co_elevated_ppm"] == 100.0
     switching = ExitSwitchingConfig.from_mapping(scenario["exit_switching"])
-    assert switching.evaluation_window == 6
-    assert switching.minimum_consecutive_increases == 5
-    assert switching.danger_expected_min_temperature_c == 40.0
+    assert switching.evaluation_window == 5
+    assert switching.minimum_consecutive_increases == 4
+    assert switching.danger_expected_min_temperature_c == 60.0
     assert scenario["replanning"]["max_replan_attempts"] == 5
 
 

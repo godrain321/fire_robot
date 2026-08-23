@@ -22,7 +22,7 @@ class ExitSwitchingConfig:
     minimum_direction_difference_deg: float = 90.0
     switch_cooldown_sec: float = 10.0
     additional_travel_before_switch_m: float = 0.0
-    danger_expected_min_temperature_c: float = 40.0
+    danger_expected_min_temperature_c: float = 60.0
 
     def __post_init__(self) -> None:
         if not isinstance(self.enabled, bool):

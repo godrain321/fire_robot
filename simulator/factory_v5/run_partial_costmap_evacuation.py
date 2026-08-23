@@ -482,7 +482,7 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
     state = RobotState(args.start[0], args.start[1], math.radians(args.start_theta))
     goal = tuple(args.start)
     follower = ReplannablePathFollower(grid_map, config)
-    thermal_camera = ThermalCameraMLX90640()
+    thermal_camera = ThermalCameraMLX90640(max_range=4.0)
     # Stage 2 must be able to represent the specified 1600 ppm threshold.
     gas_sensor = MQ135Sensor(MQ135Config(
         max_ppm=2000.0, warning_ppm=1000.0,
