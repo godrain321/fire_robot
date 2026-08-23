@@ -188,6 +188,9 @@ exit_selection:
 
 dynamic_obstacle_mapping:
   enabled: true
+  # A visible object is first treated as an obstacle. Only objects whose
+  # absolute world pose changes enter the separate human-candidate flow.
+  detection_range_m: 5.0
   minimum_confirmation_observations: 2
   confirmation_timeout_s: 1.0
   duplicate_merge_distance_m: 0.3
@@ -196,14 +199,14 @@ dynamic_obstacle_mapping:
   obstacle_inflation_radius_m: 0.50
   stale_obstacle_timeout_s: 10.0
   minimum_confidence: 0.6
-  # Permit the measured 0.3 m endpoint quantization around known EXIT_SOLID
-  # meshes, while preserving detection beyond that narrow door margin.
-  ignored_fds_mesh_xy_tolerance_m: 0.3
+  # Ignore only the configured door mesh itself. A different object directly
+  # in front of a door must remain observable and may block the exit.
+  ignored_fds_mesh_xy_tolerance_m: 0.0
   # Reject FDS ray endpoints that coincide with the first wall expected from
   # the static SLAM occupancy map. A return clearly in front remains eligible
   # for normal multi-observation dynamic-obstacle confirmation.
-  known_static_hit_tolerance_m: 0.35
-  minimum_new_obstacle_depth_difference_m: 0.30
+  known_static_hit_tolerance_m: 0.05
+  minimum_new_obstacle_depth_difference_m: 0.05
   # These are intentional EXIT_SOLID door meshes, not newly introduced
   # obstacles. Their narrow configured XY quantization margin is ignored;
   # observations elsewhere continue through normal confirmation.

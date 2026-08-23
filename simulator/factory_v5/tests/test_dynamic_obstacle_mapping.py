@@ -159,6 +159,50 @@ def test_occlusion_without_known_static_hit_remains_new_obstacle():
     assert len(update.confirmed_obstacle_ids) == 1
 
 
+def test_obstacle_outside_five_metre_sensor_radius_is_not_registered():
+    metadata = MapMetadata(0, 10, 0, 4, 1, 11, 5, (0, 0))
+    state = WorldState(metadata, np.zeros((5, 11), bool))
+    mapper = DynamicObstacleMapper(
+        metadata, state.known_occupancy_map,
+        DynamicObstacleMappingConfig(
+            minimum_confirmation_observations=1,
+            detection_range_m=5.0,
+        ),
+    )
+
+    update = mapper.process_thermal_rays(
+        "outside-range", (directed_ray((6.0, 0.0)),),
+        simulation_time=0.0, world_state=state,
+    )
+
+    assert not update.observed_positions_world
+    assert not state.dynamic_obstacles
+
+
+def test_object_twenty_cm_before_slam_wall_is_registered_with_runtime_policy():
+    metadata = MapMetadata(0, 1, 0, 1, 0.1, 11, 11, (0, 0))
+    static = np.zeros((11, 11), bool)
+    static[5, 8] = True
+    state = WorldState(metadata, static)
+    mapper = DynamicObstacleMapper(
+        metadata, static,
+        DynamicObstacleMappingConfig(
+            minimum_confirmation_observations=1,
+            known_static_hit_tolerance_m=0.05,
+            minimum_new_obstacle_depth_difference_m=0.05,
+        ),
+    )
+
+    update = mapper.process_thermal_rays(
+        "rack-before-door",
+        (directed_ray((0.6, 0.5), origin=(0.0, 0.5), maximum_range=1.0),),
+        simulation_time=0.0, world_state=state,
+    )
+
+    assert update.observed_positions_world == ((0.6, 0.5),)
+    assert update.confirmed_obstacle_ids
+
+
 def test_track_average_cannot_move_confirmed_obstacle_into_static_occupancy():
     metadata = MapMetadata(0, 1, 0, 1, 0.1, 11, 11, (0, 0))
     static = np.zeros((11, 11), bool)

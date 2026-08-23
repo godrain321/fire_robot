@@ -18,6 +18,7 @@ from world.entities import (
 @dataclass(frozen=True)
 class DynamicObstacleMappingConfig:
     enabled: bool = True
+    detection_range_m: float = 5.0
     minimum_confirmation_observations: int = 2
     confirmation_timeout_s: float = 1.0
     duplicate_merge_distance_m: float = 0.3
@@ -49,7 +50,7 @@ class DynamicObstacleMappingConfig:
         if self.minimum_confirmation_observations < 1:
             raise ValueError("minimum_confirmation_observations must be at least one")
         for name in (
-            "confirmation_timeout_s", "duplicate_merge_distance_m",
+            "detection_range_m", "confirmation_timeout_s", "duplicate_merge_distance_m",
             "obstacle_diameter_m", "obstacle_inflation_radius_m",
             "stale_obstacle_timeout_s", "ignored_fds_mesh_xy_tolerance_m",
             "known_static_hit_tolerance_m",
@@ -62,6 +63,8 @@ class DynamicObstacleMappingConfig:
                 raise ValueError(f"{name} must be non-negative")
         if self.obstacle_diameter_m <= 0.0:
             raise ValueError("obstacle_diameter_m must be positive")
+        if self.detection_range_m <= 0.0:
+            raise ValueError("detection_range_m must be positive")
         if not 0.0 <= self.minimum_confidence <= 1.0:
             raise ValueError("minimum_confidence must be in [0,1]")
         if any(
@@ -138,6 +141,8 @@ class DynamicObstacleMapper:
             if not all(math.isfinite(value) for value in point):
                 continue
             if not self.metadata.is_world_position_in_bounds(*point):
+                continue
+            if not self._within_detection_range(ray, point):
                 continue
             if self._matches_ignored_fds_mesh(sample.world_position):
                 continue
@@ -223,6 +228,29 @@ class DynamicObstacleMapper:
         return DynamicObstacleMappingUpdate(
             tuple(endpoints), tuple(confirmed), tuple(updated), rejected_static,
             changed,
+        )
+
+    def _within_detection_range(self, ray, point) -> bool:
+        """Limit perceived objects to the configured robot-sensor radius."""
+        origin = getattr(ray, "camera_origin_world", None)
+        if origin is None:
+            distance = getattr(ray, "hit_distance", None)
+            try:
+                distance = float(distance)
+            except (TypeError, ValueError):
+                return False
+            return (
+                math.isfinite(distance)
+                and distance <= self.config.detection_range_m + 1e-12
+            )
+        try:
+            origin_xy = (float(origin[0]), float(origin[1]))
+        except (IndexError, TypeError, ValueError):
+            return False
+        return (
+            all(math.isfinite(value) for value in origin_xy)
+            and math.dist(origin_xy, point)
+            <= self.config.detection_range_m + 1e-12
         )
 
     def _matches_ignored_fds_mesh(self, world_position) -> bool:
