@@ -115,11 +115,11 @@ victim_approach_distance_m: 1.0
 
 # Exit exploration is interrupted only after an object's absolute world pose
 # changes inside this omnidirectional radius. The candidate is verified from
-# a stationary five-metre stand-off before entering the existing victim flow.
+# a stationary two-metre stand-off before entering the existing victim flow.
 moving_object_detection:
-  detection_range_m: 10.0
+  detection_range_m: 5.0
   minimum_position_change_m: 0.05
-  candidate_stop_distance_m: 5.0
+  candidate_stop_distance_m: 2.0
   confirmation_wait_s: 3.0
 
 victim_following:
@@ -240,9 +240,6 @@ exit_blockage:
   consider_human_clearance: true
   human_clearance_m: 0.2
   exclude_blocked_exit_immediately: true
-  # All exits have intentional FDS door meshes that thermal occlusion can
-  # otherwise misclassify as newly discovered obstacles.
-  ignored_exit_ids: [EXIT1, EXIT2, EXIT3]
 
 perception_map_display:
   unknown_color: [110, 110, 110]

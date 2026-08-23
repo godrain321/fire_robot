@@ -127,7 +127,10 @@ def test_exit1_door_meshes_are_ignored_by_dynamic_blockage_detection():
     assert {
         f"V3_EXIT1_{index:04d}" for index in range(1, 12)
     } <= ignored_meshes
-    assert "EXIT1" in scenario["exit_blockage"]["ignored_exit_ids"]
+    # Door meshes are filtered individually; the whole exit must still be
+    # evaluated so a novel rack or other observed obstacle can block it.
+    assert "ignored_exit_ids" not in scenario["exit_blockage"]
+    assert "EXIT1_FALLEN_STORAGE_RACK" not in ignored_meshes
 
 
 def test_scenario3_fds_props_do_not_block_shared_victim_waypoint():
