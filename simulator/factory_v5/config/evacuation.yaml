@@ -26,6 +26,8 @@ reference_waypoint_graph:
   connector_search_radius_m: 3.0
   connector_candidate_count: 8
   fallback_to_cell_astar: true
+  waypoint_cost_radius_m: 0.10
+  waypoint_risk_weight: 1.0
 
 # Execute only measured YAML graph turns (for example w1 -> w7), while the
 # unchanged cell path and simplifier continue to provide safety validation and
@@ -360,16 +362,17 @@ evacuation_route_selection:
 
 exit_switching:
   enabled: true
-  # Five valid maximum-temperature samples must all rise strictly. The legacy
-  # cost ratio/absolute fields remain accepted for configuration compatibility
-  # but do not drive DANGER_EXPECTED.
-  evaluation_window: 5
-  minimum_consecutive_increases: 4
+  # Start DANGER_EXPECTED trend evaluation only after the remaining forward
+  # route contains an observed cell at or above 40 C. Six route evaluations
+  # must then contain five strictly consecutive average-cost increases.
+  danger_expected_min_temperature_c: 40.0
+  evaluation_window: 6
+  minimum_consecutive_increases: 5
   minimum_increase_ratio: 0.10
   minimum_absolute_increase: 0.25
   minimum_direction_difference_deg: 90.0
   switch_cooldown_sec: 10.0
-  # After five strictly rising route-temperature evaluations, travel one more
+  # After five strictly rising route-cost transitions, travel one more
   # metre before DANGER_EXPECTED/switch. Hard obstacle/thermal/CO blocks stop now.
   additional_travel_before_switch_m: 1.0
 

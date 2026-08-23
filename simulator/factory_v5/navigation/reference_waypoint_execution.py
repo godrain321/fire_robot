@@ -7,7 +7,7 @@ import math
 
 import numpy as np
 
-from planner.a_star import weighted_a_star
+from planner.a_star import unweighted_a_star
 
 
 @dataclass(frozen=True)
@@ -84,7 +84,7 @@ def build_reference_execution_path(
     waypoint_by_id, config, path_simplifier, costmap,
     static_obstacle_map, dynamic_obstacle_map, estimated_fire_map,
 ):
-    """Extract graph turns, then join each consecutive target with weighted A*."""
+    """Extract graph turns, then join each target with ordinary Cell A*."""
     fallback = ReferenceExecutionPath(
         False, tuple(), tuple(simplified_result.simplified_path_grid),
         tuple(simplified_result.waypoints_world), None,
@@ -121,7 +121,7 @@ def build_reference_execution_path(
     ordered_list = []
     worlds_list = []
     for index, (start, end) in enumerate(zip(targets, targets[1:])):
-        segment = weighted_a_star(effective, start, end)
+        segment = unweighted_a_star(effective, start, end)
         if not segment.path:
             reason = f"corner_astar_failed:{segment.reason}"
             if config.fallback_to_simplified_path:

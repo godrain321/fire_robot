@@ -22,6 +22,7 @@ class ExitSwitchingConfig:
     minimum_direction_difference_deg: float = 90.0
     switch_cooldown_sec: float = 10.0
     additional_travel_before_switch_m: float = 0.0
+    danger_expected_min_temperature_c: float = 40.0
 
     def __post_init__(self) -> None:
         if not isinstance(self.enabled, bool):
@@ -37,6 +38,7 @@ class ExitSwitchingConfig:
         for name in (
             "minimum_increase_ratio", "minimum_absolute_increase",
             "switch_cooldown_sec", "additional_travel_before_switch_m",
+            "danger_expected_min_temperature_c",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not math.isfinite(float(value)) or value < 0:
@@ -80,18 +82,25 @@ class RouteTemperatureSample:
     costmap_revision: int
     evaluated_at: float
     maximum_temperature_c: float
+    average_route_cost: float
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
 class RouteTemperatureTrendMonitor:
-    """Trigger only when a full window of route temperatures rises."""
+    """Gate DANGER_EXPECTED on heat, then track forward-route cost rises."""
 
-    def __init__(self, evaluation_window: int = 5):
+    def __init__(
+        self, evaluation_window: int = 6,
+        minimum_temperature_c: float = 40.0,
+    ):
         if isinstance(evaluation_window, bool) or evaluation_window < 2:
             raise ValueError("evaluation_window must be an integer of at least 2")
         self.evaluation_window = int(evaluation_window)
+        if not math.isfinite(float(minimum_temperature_c)):
+            raise ValueError("minimum_temperature_c must be finite")
+        self.minimum_temperature_c = float(minimum_temperature_c)
         self._samples = deque(maxlen=self.evaluation_window)
         self._last_revision = None
 
@@ -103,7 +112,9 @@ class RouteTemperatureTrendMonitor:
         self._samples.clear()
         self._last_revision = None
 
-    def record(self, path_grid, temperature_map, *, revision, evaluated_at):
+    def record(
+        self, path_grid, cost_map, temperature_map, *, revision, evaluated_at,
+    ):
         if self._last_revision == int(revision):
             return CostTrendDecision(False, 0, None, None, None)
         self._last_revision = int(revision)
@@ -120,23 +131,36 @@ class RouteTemperatureTrendMonitor:
         if not values:
             return CostTrendDecision(False, 0, None, None, None)
         maximum = max(values)
+        if maximum < self.minimum_temperature_c:
+            self._samples.clear()
+            return CostTrendDecision(False, 0, None, None, None)
+        evaluated = evaluate_path_cost(path_grid, cost_map)
+        if evaluated is None:
+            return CostTrendDecision(False, 0, None, None, "invalid_path_cost")
+        _, average_cost, _ = evaluated
         self._samples.append(RouteTemperatureSample(
-            int(revision), float(evaluated_at), maximum,
+            int(revision), float(evaluated_at), maximum, average_cost,
         ))
         samples = tuple(self._samples)
-        consecutive = sum(
-            current.maximum_temperature_c > previous.maximum_temperature_c + 1e-12
-            for previous, current in zip(samples, samples[1:])
-        )
+        consecutive = 0
+        for previous, current in reversed(tuple(zip(samples, samples[1:]))):
+            if current.average_route_cost > previous.average_route_cost + 1e-12:
+                consecutive += 1
+            else:
+                break
         required = (
             len(samples) == self.evaluation_window
             and consecutive == self.evaluation_window - 1
         )
         reason = None if not required else (
-            "sustained_route_temperature_increase:"
-            + "->".join(f"{item.maximum_temperature_c:.3f}" for item in samples)
+            f"route_temperature_at_least_{self.minimum_temperature_c:.1f}C;"
+            "sustained_route_cost_increase:"
+            + "->".join(f"{item.average_route_cost:.3f}" for item in samples)
         )
-        return CostTrendDecision(required, consecutive, None, maximum, reason)
+        return CostTrendDecision(
+            required, consecutive, samples[0].average_route_cost,
+            average_cost, reason,
+        )
 
 
 @dataclass

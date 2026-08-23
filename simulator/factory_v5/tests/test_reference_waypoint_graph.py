@@ -30,10 +30,10 @@ def test_global_route_uses_reference_nodes_between_local_connectors():
     assert result.path[0] == (0, 1)
     assert result.path[-1] == (6, 1)
     assert result.used_reference_graph
-    assert result.reference_waypoint_ids == ("w2", "w3", "w4", "w5")
+    assert result.reference_waypoint_ids == ("w1", "w2", "w3", "w4", "w5")
 
 
-def test_off_graph_start_connects_directly_to_second_reference_waypoint():
+def test_off_graph_start_connects_to_reachable_entry_waypoint():
     metadata = MapMetadata(0, 4, 0, 3, 1, 5, 4, (0, 0))
     points = (
         waypoint("nearest", 1, 1),
@@ -49,13 +49,13 @@ def test_off_graph_start_connects_directly_to_second_reference_waypoint():
     )
     result = planner.plan(np.ones((4, 5)), (1, 0), (4, 2))
     assert result.used_reference_graph
-    assert result.reference_waypoint_ids == ("second", "third")
+    assert result.reference_waypoint_ids == ("nearest", "second", "third")
     assert result.path[0] == (1, 0)
     assert (2, 2) in result.path
     assert result.path.index((2, 2)) < result.path.index((3, 2))
 
 
-def test_single_anchor_short_route_uses_direct_cell_astar():
+def test_single_anchor_short_route_uses_entry_and_goal_connectors():
     metadata = MapMetadata(0, 3, 0, 2, 1, 4, 3, (0, 0))
     points = (
         waypoint("near", 1, 1), waypoint("far", 3, 1),
@@ -70,9 +70,9 @@ def test_single_anchor_short_route_uses_direct_cell_astar():
     result = planner.plan(np.ones((3, 4)), (0, 1), (1, 2))
     assert result.path[0] == (0, 1)
     assert result.path[-1] == (1, 2)
-    assert not result.used_reference_graph
-    assert result.reference_waypoint_ids == ()
-    assert result.reason == "single reference anchor; cell A* fallback: path found"
+    assert result.used_reference_graph
+    assert result.reference_waypoint_ids == ("near",)
+    assert result.reason == "reference waypoint graph path found"
 
 
 def test_blocked_reference_edge_falls_back_to_cell_astar():
@@ -90,7 +90,10 @@ def test_blocked_reference_edge_falls_back_to_cell_astar():
     result = planner.plan(costs, (0, 1), (6, 1))
     assert result.path
     assert not result.used_reference_graph
-    assert result.reason == "no safe reference graph route; cell A* fallback: path found"
+    assert result.reason == (
+        "no safe reference graph route; cell A* fallback: "
+        "unweighted cell A* path found"
+    )
 
 
 def test_start_equal_goal_returns_already_at_goal_before_graph_search():
@@ -124,7 +127,7 @@ def test_true_no_path_requires_graph_and_cell_astar_failure():
 
     assert not result.path
     assert not result.used_reference_graph
-    assert "cell A* fallback: no traversable path" in result.reason
+    assert "cell A* fallback: no traversable unweighted A* path" in result.reason
 
 
 def test_graph_selects_lower_cost_reference_branch():
@@ -148,9 +151,26 @@ def test_graph_selects_lower_cost_reference_branch():
     assert "upper1" not in result.reference_waypoint_ids
 
 
+def test_waypoint_cost_uses_maximum_cost_within_configured_radius():
+    metadata = MapMetadata(0, 0.4, 0, 0.4, 0.1, 5, 5, (0, 0))
+    points = (waypoint("center", 2, 2), waypoint("goal", 4, 2))
+    planner = ReferenceWaypointGraphPlanner(
+        metadata, points,
+        ReferenceWaypointGraphConfig(
+            neighbor_radius_m=0.3, connector_search_radius_m=0.3,
+            waypoint_cost_radius_m=0.1,
+        ),
+    )
+    costs = np.ones((5, 5))
+    costs[2, 3] = 9.0
+
+    assert planner._waypoint_cost(costs, points[0]) == 9.0
+
+
 def test_graph_configuration_rejects_unsafe_values():
     for values in (
         {"neighbor_radius_m": 0}, {"connector_search_radius_m": -1},
+        {"waypoint_cost_radius_m": 0}, {"waypoint_risk_weight": -1},
         {"connector_candidate_count": 0}, {"fallback_to_cell_astar": "no"},
         {"unknown": True},
     ):

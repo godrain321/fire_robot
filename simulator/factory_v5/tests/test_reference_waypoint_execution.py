@@ -20,6 +20,7 @@ def waypoint(name, grid):
 class Validator:
     def __init__(self, safe=True):
         self.safe = safe
+        self.seen_paths = []
 
     def validate_path(self, path, **kwargs):
         return SimpleNamespace(
@@ -30,6 +31,7 @@ class Validator:
         )
 
     def simplify(self, path, *, start_world, goal_world, **kwargs):
+        self.seen_paths.append(tuple(path))
         endpoints = (tuple(path[0]), tuple(path[-1]))
         return SimpleNamespace(
             success=True,
@@ -151,3 +153,28 @@ def test_execution_keeps_first_reference_waypoint_from_planner():
     )
     assert result.grid_path[1] == (2, 0)
     assert result.reference_waypoint_ids[0] == "w1"
+
+
+def test_waypoint_segments_use_unweighted_astar_despite_high_finite_cost():
+    points = (waypoint("start", (0, 1)), waypoint("goal", (4, 1)))
+    lookup = {item.waypoint_id: item for item in points}
+    maps = planning_maps(width=5, height=3)
+    maps["costmap"][1, 2] = 1000.0
+    validator = Validator()
+    simplified = SimpleNamespace(
+        simplified_path_grid=((0, 1), (4, 1)),
+        waypoints_world=((0.0, 1.0), (4.0, 1.0)),
+    )
+
+    result = build_reference_execution_path(
+        original_path_grid=((0, 1), (1, 1), (2, 1), (3, 1), (4, 1)),
+        simplified_result=simplified,
+        reference_waypoint_ids=("start", "goal"),
+        waypoint_by_id=lookup, config=ReferenceWaypointExecutionConfig(),
+        path_simplifier=validator, **maps,
+    )
+
+    assert result.used_reference_targets
+    assert validator.seen_paths[0] == (
+        (0, 1), (1, 1), (2, 1), (3, 1), (4, 1)
+    )

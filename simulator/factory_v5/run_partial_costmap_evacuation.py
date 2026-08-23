@@ -400,7 +400,8 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
         args.exit_switching_config
     )
     route_cost_monitor = RouteTemperatureTrendMonitor(
-        exit_switching_config.evaluation_window
+        exit_switching_config.evaluation_window,
+        exit_switching_config.danger_expected_min_temperature_c,
     )
     delayed_cost_switch = DelayedCostSwitch(
         exit_switching_config.additional_travel_before_switch_m
@@ -1170,7 +1171,8 @@ def run_simulation(args) -> tuple[bool, SimulationMetrics, PartialFireCostmap, f
             ):
                 remaining_for_cost = tuple(follower.remaining_grid_path())
                 trend = route_cost_monitor.record(
-                    remaining_for_cost, belief.temperature_belief_map,
+                    remaining_for_cost, belief.final_cost_map,
+                    belief.temperature_belief_map,
                     revision=belief.revision, evaluated_at=sim_elapsed,
                 )
                 if route_cost_monitor.samples:
